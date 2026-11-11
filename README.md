@@ -51,37 +51,39 @@ Revenue streams: **entertainment** (B2C), **data licensing** (B2B: robotics, OEM
 
 ## What this demo shows
 
-A web-based, hardware-free proof of concept for the first machine: a **remote demolition excavator**.
+A web-based, hardware-free proof of concept for the first machine: a **remote wrecking-ball crane** demolishing high-rises.
 
 | Path | What it is |
 |---|---|
-| `game/` | First-person 3D demolition game seen from the operator cab, built with Three.js and the Rapier physics engine. Hydraulic joints are simulated: they have response lag, slow down under load, and the bucket cannot dig through the ground. Buildings are made of individual bricks and collapse physically. Hits give feedback through camera shake, dust, synthesized audio, and gamepad or phone vibration. Includes star ratings, a leaderboard, random hidden treasures (scoop them into the truck for bonus points), and an adjustable **simulated network latency**. |
-| `pad/` | **Phone as remote controller.** Scan the QR code on the game screen and the phone becomes an ISO-pattern twin-joystick controller that sends input over WebSocket at 30 Hz. If no signal arrives for 400 ms, the sticks release automatically, a dead-man switch as on real remote machinery. |
-| `dashboard/` | Live telemetry dashboard over Server-Sent Events. It shows command vs. actual joint motion, the input delay caused by latency, hydraulic load, a top-down bucket trajectory, an event stream, and the leaderboard. Each session can be exported as JSON or CSV. |
+| `game/` | First-person demolition game seen from the cab of a crawler crane, built with Three.js and the Rapier physics engine. A 14-tonne wrecking ball hangs from a 34 m lattice boom on a simulated cable: it swings as a real pendulum, so the operator has to time swings, use the drag line to wind up, and steady the sway. High-rises are built from individual wall panels and floor slabs. A hard hit cracks the panels it touches, and whatever they were holding up collapses under real physics. Every lot is different: each round draws **1 to 3 buildings from 9 templates** (slab block, point tower, wedding-cake tower, podium tower, glass office, twin towers, brick tenement, parking garage, L-shaped apartments) and places them at random around the crane, next to a protected heritage house. The boom stops on contact instead of bulldozing (a "boom strike" costs points). Hits give feedback through camera shake, dust, synthesized audio, and gamepad or phone vibration. Includes star ratings, a leaderboard, and adjustable **simulated network latency**. Add `?lot=0,4` to the URL to pick specific templates for a demo. |
+| `pad/` | **Phone as remote controller.** Scan the QR code on the game screen and the phone becomes a twin-joystick crane controller that sends input over WebSocket at 30 Hz. If no signal arrives for 400 ms, the sticks release automatically, a dead-man switch as on real remote machinery. |
+| `dashboard/` | Live telemetry dashboard over Server-Sent Events. It shows command vs. actual joint motion, the input delay caused by latency, cable tension, a top-down map of the lot with the ball's path, an event stream, and the leaderboard. Each session can be exported as JSON or CSV. |
 | `waitlist/` | Waitlist sign-up page (email, name, birthday). Admin export is protected by a token. |
 | `server.js` | Lightweight Node.js server that serves the static files and provides the telemetry API, the live event stream, the WebSocket controller relay, and QR codes. |
 
-### Controls (ISO pattern, the same as real excavators)
-- **Left stick:** `A` / `D` swing the upper body · `W` / `S` extend or retract the arm (stick)
-- **Right stick:** `I` / `K` lower or raise the boom · `J` / `L` curl or dump the bucket
+### Controls
+- **Left stick:** `A` / `D` swing the upper body · `W` / `S` lower or hoist the ball
+- **Right stick:** `I` / `K` boom down or up · `J` pull the drag line (release to throw the ball) · `L` steady the sway
 - **Tracks:** arrow keys · `V` toggles third-person view (debug) · `[` `]` adjust latency · right-drag to look around
-- Reach 75% demolition, then press `Enter` to finish the job.
+- Bring every yellow-ringed building down (60% of its pieces displaced), then press `Enter` to finish the job.
 - Xbox and PlayStation gamepads and the phone controller are also supported.
 
-Because the controls match real machines, skills learned in the game transfer to the real thing. That is the basis of the player-to-operator pipeline.
+The game's controls follow real crane conventions, so skills learned in the game carry over to the real machine. That is the basis of the player-to-operator pipeline.
 
 ### Telemetry schema (20 Hz per session)
 | Field | Meaning |
 |---|---|
 | `t`, `src`, `latencyMs` | Time, input source (keyboard, gamepad, or phone), simulated latency |
-| `inSwing` `inArm` `inBoom` `inBucket` `inTrackL` `inTrackR` | Raw operator input (−1 to 1) |
-| `dSwing` `dArm` `dBoom` `dBucket` | Input as delivered to the machine after latency |
-| `swing` `boom` `arm` `bucket` | Actual joint angles (°) |
-| `tgtSwing` `tgtBoom` `tgtArm` `tgtBucket` | Ideal joint angles with no latency or hydraulic lag (°) |
-| `tipX` `tipY` `tipZ`, `baseX` `baseZ` `heading` | Bucket tip position and machine pose |
-| `load`, `impulse` | Hydraulic load (0 to 1) and peak contact force (kN) |
+| `inSwing` `inBoom` `inHoist` `inDrag` `inTrackL` `inTrackR` | Raw operator input (−1 to 1) |
+| `dSwing` `dBoom` `dHoist` `dDrag` | Input as delivered to the machine after latency |
+| `swing` `boom` `hoist` | Actual slew angle (°), boom elevation (°), cable length (m) |
+| `tgtSwing` `tgtBoom` `tgtHoist` | The same with no latency and no drive lag |
+| `tipX` `tipY` `tipZ` | Boom tip position |
+| `ballX` `ballY` `ballZ`, `ballVX` `ballVY` `ballVZ` | Wrecking ball position and velocity |
+| `baseX` `baseZ` `heading` | Crawler pose |
+| `tensionKN`, `load`, `impulse` | Cable tension (kN and 0 to 1), peak ball contact force (kN) |
 
-Events are logged too: impacts, demolition progress, treasures delivered, collateral damage to the neighbouring house, latency changes, and controller connects and disconnects.
+Events are logged too: the lot layout (buildings, positions, piece counts), heavy impacts, demolition progress, buildings brought down, boom strikes, collateral damage to the heritage house, latency changes, and controller connects and disconnects.
 
 ---
 
@@ -96,7 +98,8 @@ PORT=8411 DATA_DIR=/tmp/excavator-data node server.js
 Optional: set `WAITLIST_ADMIN_TOKEN` to enable waitlist export (`GET /api/waitlist/export.csv` with `Authorization: Bearer <token>`).
 
 ## Roadmap
-- [x] Excavator demolition simulation with physics, telemetry, and a phone controller
+- [x] Wrecking-ball crane simulation with physics, procedural high-rise lots, telemetry, and a phone controller
+- [ ] Excavator and long-reach demolition machines for clearing the rubble
 - [ ] Café operator station: physical joysticks, seat motion, VR mode
 - [ ] Latency compensation research (predictive display, input shaping)
 - [ ] First remote session on a real machine at a partner site

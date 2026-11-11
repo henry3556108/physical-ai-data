@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Excavator Telemetry Dashboard</title>
+<title>Crane Telemetry Dashboard</title>
 <style>
   :root {
     color-scheme: dark;
@@ -66,7 +66,7 @@
 </head>
 <body>
 <header>
-  <h1>Remote Demolition Excavator · <em>Telemetry Dashboard</em></h1>
+  <h1>Remote Wrecking Ball Crane · <em>Telemetry Dashboard</em></h1>
   <span class="live" id="liveBadge"><i></i><span id="liveText">Connecting</span></span>
   <span id="mode"></span>
   <span class="sp"></span>
@@ -75,14 +75,14 @@
 </header>
 <main>
   <div class="card kpi"><h2>Total sessions</h2><div class="v" id="kSessions">0</div><div class="s" id="kSessionsS">　</div></div>
-  <div class="card kpi"><h2>Telemetry samples</h2><div class="v" id="kSamples">0</div><div class="s">20 Hz: operator input, joint angles, bucket path</div></div>
+  <div class="card kpi"><h2>Telemetry samples</h2><div class="v" id="kSamples">0</div><div class="s">20 Hz: operator input, crane joints, ball path</div></div>
   <div class="card kpi"><h2>Teleop time</h2><div class="v" id="kMinutes">0 min</div><div class="s">Hours of human heavy-machine control: future AI training data</div></div>
   <div class="card kpi"><h2>Current session</h2><div class="v" id="kCurrent">—</div><div class="s" id="kCurrentS">Waiting for player</div></div>
 
   <div class="card c8">
     <div class="row" style="justify-content:space-between">
-      <div><h2>Command vs. actual motion</h2><p class="desc" style="margin:0">The ideal trajectory is the joint angle with no latency and no hydraulic lag. The wider the gap, the harder teleoperation gets.</p></div>
-      <div class="seg" id="jointSeg"><button data-j="Boom" class="on">Boom</button><button data-j="Arm">Arm</button><button data-j="Bucket">Bucket</button><button data-j="Swing">Swing</button></div>
+      <div><h2>Command vs. actual motion</h2><p class="desc" style="margin:0">The ideal trajectory is where the joint would be with no latency and no drive lag (degrees; cable in metres). The wider the gap, the harder teleoperation gets.</p></div>
+      <div class="seg" id="jointSeg"><button data-j="Boom" class="on">Boom</button><button data-j="Swing">Swing</button><button data-j="Hoist">Cable</button></div>
     </div>
     <div class="legend" style="margin:6px 0"><span class="dash" style="--c:var(--series-1)">Ideal trajectory (°)</span><span style="--c:var(--series-2)">Actual angle (°)</span></div>
     <div class="chart" id="chAngle"></div>
@@ -90,19 +90,19 @@
     <div class="chart" id="chInput" style="height:140px"></div>
   </div>
   <div class="card c4">
-    <h2>Bucket path (top-down)</h2>
-    <p class="desc">Red: target building. Blue-gray: neighbor house. Dashed: truck bed. Every dot is a trainable position sample.</p>
+    <h2>Ball path (top-down)</h2>
+    <p class="desc">Red: target buildings. Blue-gray: protected heritage house. The line is the wrecking ball; every point is a trainable position sample.</p>
     <div class="chart" id="chTrack" style="height:360px"></div>
   </div>
 
   <div class="card c8">
-    <h2>Hydraulic load</h2>
-    <p class="desc">Bucket contact force as 0–100%; spikes are impacts</p>
+    <h2>Cable tension</h2>
+    <p class="desc">Hoist cable tension, 100% = 4× the ball’s weight; spikes are swings and impacts</p>
     <div class="chart" id="chLoad" style="height:140px"></div>
   </div>
   <div class="card c4">
     <h2>Event stream</h2>
-    <p class="desc">Impacts, demolition progress, treasure, collateral damage, latency changes</p>
+    <p class="desc">Impacts, buildings brought down, boom strikes, collateral damage, latency changes</p>
     <div id="events"></div>
   </div>
 
@@ -208,7 +208,7 @@
   const inputChart = makeChart($('chInput'), { window: WINDOW, min: -1.1, max: 1.1, fmt: v => v.toFixed(1), series: [
     { key: 'raw', label: 'Operator input', color: C.s1, dash: true }, { key: 'del', label: 'Delivered', color: C.s2 }] });
   const loadChart = makeChart($('chLoad'), { window: WINDOW, min: 0, max: 1, fmt: v => Math.round(v * 100) + '%', series: [
-    { key: 'load', label: 'Hydraulic load', color: C.s1 }] });
+    { key: 'load', label: 'Cable tension', color: C.s1 }] });
 
   // ---------- top-down path ----------
   const trackEl = $('chTrack'), tcv = document.createElement('canvas'); trackEl.appendChild(tcv);
@@ -218,8 +218,18 @@
     tcv.width = r.width * d; tcv.height = r.height * d; tctx.setTransform(d, 0, 0, d, 0, 0);
     const W = r.width, H = r.height;
     tctx.clearRect(0, 0, W, H);
-    // world coords x ∈ [-13, 13], z ∈ [-3, 17]; screen right = cab view right (world -x)
-    const xr = [-13, 13], zr = [-3, 17];
+    // Crane sessions log their lot in the start event; older excavator sessions use the fixed layout
+    const st = events.find(e => e.type === 'start');
+    const lot = st && Array.isArray(st.lot) ? st.lot : null;
+    let xr = [-13, 13], zr = [-3, 17];
+    if (lot) {
+      const xs = [0], zs = [0];
+      for (const b of lot) { xs.push(b.x - b.r, b.x + b.r); zs.push(b.z - b.r, b.z + b.r); }
+      for (const q of samples) if (q.ballX != null) { xs.push(q.ballX); zs.push(q.ballZ); }
+      const x0 = Math.min(...xs) - 4, x1 = Math.max(...xs) + 4, z0 = Math.min(...zs) - 4, z1 = Math.max(...zs) + 4;
+      const side = Math.max(x1 - x0, (z1 - z0) * W / H), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+      xr = [cx - side / 2, cx + side / 2]; zr = [cz - side * H / W / 2, cz + side * H / W / 2];
+    }
     const sc = Math.min(W / (xr[1] - xr[0]), H / (zr[1] - zr[0]));
     const ox = (W - sc * (xr[1] - xr[0])) / 2, oy = (H - sc * (zr[1] - zr[0])) / 2;
     const P = (x, z) => [ox + (xr[1] - x) * sc, oy + (zr[1] - z) * sc];
@@ -230,27 +240,39 @@
       tctx.strokeStyle = stroke; tctx.strokeRect(x1, y1, x2 - x1, y2 - y1); tctx.setLineDash([]);
     };
     tctx.strokeStyle = C.grid; tctx.lineWidth = 1;
-    for (let x = -12; x <= 12; x += 4) { const [a, b] = P(x, zr[0]), [c, e] = P(x, zr[1]); tctx.beginPath(); tctx.moveTo(a, b); tctx.lineTo(c, e); tctx.stroke(); }
-    for (let z = -2; z <= 16; z += 4) { const [a, b] = P(xr[0], z), [c, e] = P(xr[1], z); tctx.beginPath(); tctx.moveTo(a, b); tctx.lineTo(c, e); tctx.stroke(); }
-    rect(0, 11, 6, 4.8, '#b5654a', 'rgba(181,101,74,.18)');
-    rect(-8.6, 11, 4.2, 4.2, '#8fa3b8', 'rgba(143,163,184,.15)');
-    rect(8.2, 5.5, 3, 4.6, C.accent, null, true);
+    const step = lot ? 10 : 4;
+    for (let x = Math.ceil(xr[0] / step) * step; x <= xr[1]; x += step) { const [a, b] = P(x, zr[0]), [c, e] = P(x, zr[1]); tctx.beginPath(); tctx.moveTo(a, b); tctx.lineTo(c, e); tctx.stroke(); }
+    for (let z = Math.ceil(zr[0] / step) * step; z <= zr[1]; z += step) { const [a, b] = P(xr[0], z), [c, e] = P(xr[1], z); tctx.beginPath(); tctx.moveTo(a, b); tctx.lineTo(c, e); tctx.stroke(); }
     tctx.fillStyle = C.muted; tctx.font = '11px system-ui'; tctx.textAlign = 'center';
-    let [lx, ly] = P(0, 14.2); tctx.fillText('Target building', lx, ly);
-    [lx, ly] = P(-8.6, 14.2); tctx.fillText('Neighbor', lx, ly);
-    [lx, ly] = P(8.2, 8.6); tctx.fillText('Truck', lx, ly);
+    if (lot) {
+      for (const b of lot) {
+        const [x, y] = P(b.x, b.z), keep = b.kind === 'neighbor';
+        tctx.beginPath(); tctx.arc(x, y, b.r * sc, 0, Math.PI * 2);
+        tctx.fillStyle = keep ? 'rgba(143,163,184,.18)' : 'rgba(181,101,74,.18)'; tctx.fill();
+        tctx.strokeStyle = keep ? '#8fa3b8' : '#b5654a'; tctx.lineWidth = 1.5; tctx.stroke();
+        tctx.fillStyle = C.muted; tctx.fillText(keep ? 'Heritage (keep)' : b.name, x, y + 4);
+      }
+    } else {
+      rect(0, 11, 6, 4.8, '#b5654a', 'rgba(181,101,74,.18)');
+      rect(-8.6, 11, 4.2, 4.2, '#8fa3b8', 'rgba(143,163,184,.15)');
+      rect(8.2, 5.5, 3, 4.6, C.accent, null, true);
+      let [lx, ly] = P(0, 14.2); tctx.fillText('Target building', lx, ly);
+      [lx, ly] = P(-8.6, 14.2); tctx.fillText('Neighbor', lx, ly);
+      [lx, ly] = P(8.2, 8.6); tctx.fillText('Truck', lx, ly);
+    }
     const vis = live ? samples.slice(-WINDOW * 20 * 3) : samples;
     if (vis.length) {
       tctx.strokeStyle = C.s1; tctx.lineWidth = 2; tctx.globalAlpha = 0.85; tctx.beginPath();
-      vis.forEach((s, i) => { const [x, y] = P(s.tipX, s.tipZ); i ? tctx.lineTo(x, y) : tctx.moveTo(x, y); }); tctx.stroke();
+      const PX = q => q.ballX != null ? [q.ballX, q.ballZ] : [q.tipX, q.tipZ];
+      vis.forEach((s, i) => { const [x, y] = P(...PX(s)); i ? tctx.lineTo(x, y) : tctx.moveTo(x, y); }); tctx.stroke();
       tctx.globalAlpha = 1;
       const s = vis[vis.length - 1];
       const [bx, by] = P(s.baseX, s.baseZ);
       tctx.fillStyle = C.accent; tctx.strokeStyle = C.surface; tctx.lineWidth = 2;
       tctx.beginPath(); tctx.arc(bx, by, 7, 0, Math.PI * 2); tctx.fill(); tctx.stroke();
-      const [tx, ty] = P(s.tipX, s.tipZ);
+      const [tx, ty] = P(...PX(s));
       tctx.fillStyle = C.s1; tctx.beginPath(); tctx.arc(tx, ty, 5, 0, Math.PI * 2); tctx.fill(); tctx.stroke();
-      tctx.fillStyle = C.sec; tctx.textAlign = 'left'; tctx.fillText('Body', bx + 10, by + 4); tctx.fillText(`Bucket height ${s.tipY.toFixed(1)}m`, tx + 9, ty - 6);
+      tctx.fillStyle = C.sec; tctx.textAlign = 'left'; tctx.fillText(s.ballX != null ? 'Crane' : 'Body', bx + 10, by + 4); tctx.fillText(s.ballX != null ? `Ball height ${s.ballY.toFixed(1)}m` : `Bucket height ${s.tipY.toFixed(1)}m`, tx + 9, ty - 6);
     } else {
       tctx.fillStyle = C.muted; tctx.fillText('Waiting for data…', W / 2, H - 14);
     }
@@ -284,6 +306,8 @@
     target_reached: () => 'Demolition target reached',
     collateral: e => `⚠ Collateral damage: neighbor, ${e.count} blocks`,
     treasure: e => `Treasure collected: ${esc(e.name)} +${e.pts}`,
+    building_cleared: e => `🏚 ${esc(e.name)} brought down`,
+    boom_strike: e => `⚠ ${e.part === 'boom' ? 'Boom' : 'Crawler'} contact, motion stopped`,
     latency_change: e => `Latency set to ${e.value} ms`,
     pad_joined: () => 'Phone controller connected', pad_left: () => 'Phone controller disconnected',
     finish: e => `Finish · ${e.completed ? 'completed' : 'not completed'}, ${e.score} pts ${'★'.repeat(e.stars)}`,
@@ -292,7 +316,7 @@
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function renderEvents() {
     $('events').innerHTML = events.slice(-200).reverse().map(e => {
-      const f = EV[e.type]; const crit = e.type === 'collateral';
+      const f = EV[e.type]; const crit = e.type === 'collateral' || e.type === 'boom_strike';
       return `<div class="${crit ? 'crit' : ''}"><time>${e.t.toFixed(1)}s</time><span>${f ? f(e) : esc(e.type)}</span></div>`;
     }).join('') || '<div class="muted">No events yet</div>';
   }

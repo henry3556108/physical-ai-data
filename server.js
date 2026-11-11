@@ -90,10 +90,10 @@ async function readSessionLines(id) {
   return { samples, events };
 }
 
-const CSV_COLS = ['t', 'src', 'latencyMs', 'inSwing', 'inArm', 'inBoom', 'inBucket', 'inTrackL', 'inTrackR',
-  'dSwing', 'dArm', 'dBoom', 'dBucket',
-  'swing', 'boom', 'arm', 'bucket', 'tgtSwing', 'tgtBoom', 'tgtArm', 'tgtBucket',
-  'tipX', 'tipY', 'tipZ', 'baseX', 'baseZ', 'heading', 'load', 'impulse'];
+const CSV_COLS = ['t', 'src', 'latencyMs', 'inSwing', 'inBoom', 'inHoist', 'inDrag', 'inTrackL', 'inTrackR',
+  'dSwing', 'dBoom', 'dHoist', 'dDrag', 'swing', 'boom', 'hoist', 'tgtSwing', 'tgtBoom', 'tgtHoist',
+  'tipX', 'tipY', 'tipZ', 'ballX', 'ballY', 'ballZ', 'ballVX', 'ballVY', 'ballVZ',
+  'baseX', 'baseZ', 'heading', 'tensionKN', 'load', 'impulse'];
 function toCsv(rows, cols) {
   const esc = v => v == null ? '' : (typeof v === 'number' ? String(Math.round(v * 10000) / 10000) : `"${String(v).replace(/"/g, '""')}"`);
   return cols.join(',') + '\n' + rows.map(r => cols.map(c => esc(r[c])).join(',')).join('\n') + '\n';
@@ -159,7 +159,7 @@ async function api(req, res, url) {
     s.result = { completed: !!r.completed, score: Math.round(Number(r.score) || 0),
       stars: Math.max(0, Math.min(3, Number(r.stars) || 0)), time: Number(r.time) || 0,
       demolished: Number(r.demolished) || 0, collateral: Number(r.collateral) || 0,
-      treasures: Number(r.treasures) || 0, smoothness: Number(r.smoothness) || 0, reason: String(r.reason || '').slice(0, 60) };
+      treasures: Number(r.treasures) || 0, buildings: Number(r.buildings) || 0, boomStrikes: Number(r.boomStrikes) || 0, smoothness: Number(r.smoothness) || 0, reason: String(r.reason || '').slice(0, 60) };
     saveIndex();
     broadcast('sessionEnd', s);
     broadcast('leaderboard', leaderboard());
@@ -180,16 +180,16 @@ async function api(req, res, url) {
     const disp = n => ({ 'Content-Disposition': `attachment; filename="${n}"` });
     if (fmt === 'json') {
       return send(res, 200, JSON.stringify({ session: sessions[id], samples, events }, null, 1),
-        'application/json; charset=utf-8', disp(`excavator-${id}.json`));
+        'application/json; charset=utf-8', disp(`crane-${id}.json`));
     }
-    return send(res, 200, toCsv(samples, CSV_COLS), 'text/csv; charset=utf-8', disp(`excavator-${id}.csv`));
+    return send(res, 200, toCsv(samples, CSV_COLS), 'text/csv; charset=utf-8', disp(`crane-${id}.csv`));
   }
 
   if (p === '/api/export/all.json' && req.method === 'GET') {
     const out = [];
     for (const s of Object.values(sessions)) out.push({ session: s, ...(await readSessionLines(s.id)) });
     return send(res, 200, JSON.stringify(out), 'application/json; charset=utf-8',
-      { 'Content-Disposition': 'attachment; filename="excavator-all.json"' });
+      { 'Content-Disposition': 'attachment; filename="physical-ai-data-all.json"' });
   }
 
   if (p === '/api/qr' && req.method === 'GET') {

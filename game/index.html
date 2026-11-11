@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Remote Excavator</title>
+<title>Wrecking Ball Crane</title>
 <style>
   :root { --yellow:#f5b800; --bg:#0d0f12; --panel:rgba(12,14,18,.78); --text:#e9edf2; --muted:#9aa4b2; --red:#ff4d4d; --green:#3ddc84; }
   * { box-sizing:border-box; }
@@ -23,7 +23,7 @@
   .rec { color:var(--red); font-weight:700; }
   .rec::before { content:"●"; margin-right:6px; animation:blink 1s infinite; }
   @keyframes blink { 50% { opacity:.2; } }
-  .gauge { width:86px; text-align:center; font-size:12px; color:var(--muted); }
+  .gauge { width:92px; text-align:center; font-size:12px; color:var(--muted); }
   .gauge b { display:block; font-size:18px; color:var(--text); }
   #toast { position:fixed; top:22%; left:50%; transform:translateX(-50%); font-size:30px; font-weight:800; color:var(--yellow); text-shadow:0 2px 12px #000; pointer-events:none; opacity:0; transition:opacity .3s; white-space:nowrap; }
   #finishHint { position:fixed; top:14px; left:50%; transform:translateX(-50%); display:none; color:#111; background:var(--yellow); font-weight:700; padding:8px 16px; border-radius:999px; pointer-events:none; }
@@ -48,7 +48,7 @@
   table { width:100%; border-collapse:collapse; font-size:14px; margin-top:12px; }
   td { padding:6px 4px; border-bottom:1px solid #232830; }
   td:last-child { text-align:right; font-variant-numeric:tabular-nums; }
-  #help { bottom:14px; right:14px; font-size:12px; color:var(--muted); line-height:1.7; }
+  #help { top:172px; right:14px; font-size:12px; color:var(--muted); line-height:1.7; }
   #pairBox { display:flex; gap:16px; align-items:center; margin-top:18px; padding:14px; border:1px dashed #3a414b; border-radius:12px; }
   #pairBox img { width:132px; height:132px; background:#fff; border-radius:8px; padding:4px; flex:none; }
   #pairBox p { margin:6px 0 0; font-size:13px; color:var(--muted); }
@@ -56,6 +56,7 @@
   .room { font-size:22px; font-weight:800; letter-spacing:4px; color:var(--text); }
   .pairState.on { color:var(--green); font-weight:700; }
   @media (max-width:640px){ .controls { grid-template-columns:1fr; } #hudB { display:none; } }
+  @media (max-width:1100px){ #help { display:none !important; } }
 </style>
 </head>
 <body>
@@ -63,8 +64,10 @@
   <div class="big" id="hTime">0:00</div>
   <div class="row"><span>Demolition</span><span id="hDemo">0%</span></div>
   <div class="bar" id="demoBar"><i></i></div>
-  <div class="row" style="margin-top:6px"><span>Treasures</span><span id="hTreasure">0 / 3</span></div>
+  <div class="row" style="margin-top:6px"><span>Buildings down</span><span id="hCleared">0 / 0</span></div>
   <div class="row"><span>Collateral damage</span><span id="hCollateral">0</span></div>
+  <div class="row"><span>Boom strikes</span><span id="hStrikes">0</span></div>
+  <div id="hLot" style="font-size:12px;color:var(--muted);margin-top:4px;max-width:240px"></div>
 </div>
 <div id="hudTR" class="hud panel" style="display:none">
   <div class="rec" id="hRec">REC Telemetry recording</div>
@@ -76,30 +79,31 @@
 <div id="hudB" class="hud panel" style="display:none">
   <div class="gauge">Swing<b id="gSwing">0°</b></div>
   <div class="gauge">Boom<b id="gBoom">0°</b></div>
-  <div class="gauge">Arm<b id="gArm">0°</b></div>
-  <div class="gauge">Bucket<b id="gBucket">0°</b></div>
-  <div style="width:180px;font-size:12px;color:var(--muted)">Hydraulic load<div class="bar" id="loadBar"><i></i></div></div>
+  <div class="gauge">Cable<b id="gHoist">0 m</b></div>
+  <div class="gauge">Ball<b id="gBall">0 m/s</b></div>
+  <div style="width:150px;font-size:12px;color:var(--muted)">Cable tension<div class="bar" id="loadBar"><i></i></div></div>
 </div>
 <div id="help" class="hud panel" style="display:none">
   <kbd>H</kbd> help · <kbd>V</kbd> toggle view · <kbd>[</kbd><kbd>]</kbd> latency · right-drag to look around
 </div>
-<div id="finishHint">Target reached! Press <b>Enter</b> to finish the job</div>
+<div id="finishHint">All buildings down! Press <b>Enter</b> to finish the job</div>
 <div id="toast"></div>
 
 <div id="startOverlay" class="overlay">
   <div class="card">
     <div class="stripe"></div>
-    <h1>Remote <em>Excavator</em></h1>
-    <p class="sub">Take the operator seat, tear down the old building, and don't hit the neighbor's house. Every move you make is recorded as real-world teleoperation data for training autonomous heavy machines.</p>
+    <h1>Wrecking Ball <em>Crane</em></h1>
+    <p class="sub">Climb into the crane cab, swing a 14-tonne wrecking ball and bring down today's high-rises, without touching the blue heritage house. Every lot is different. Every move you make is recorded as real-world teleoperation data for training autonomous heavy machines.</p>
+    <p id="lotPreview" style="margin:-8px 0 0;color:var(--yellow);font-weight:700;font-size:14px"></p>
     <label for="playerName">Player name</label>
-    <input id="playerName" type="text" maxlength="20" placeholder="e.g. Digger Dan" autocomplete="off">
+    <input id="playerName" type="text" maxlength="20" placeholder="e.g. Wrecking Rita" autocomplete="off">
     <label for="latency">Simulated remote network latency: <b id="latencyVal">0 ms</b></label>
     <input id="latency" type="range" min="0" max="500" step="50" value="0">
     <div class="controls">
-      <div><b>Left stick</b> (ISO pattern)<br><kbd>A</kbd><kbd>D</kbd> swing left / right<br><kbd>W</kbd><kbd>S</kbd> arm out / in</div>
-      <div><b>Right stick</b><br><kbd>I</kbd><kbd>K</kbd> boom down / up<br><kbd>J</kbd><kbd>L</kbd> bucket curl / dump</div>
+      <div><b>Left stick</b><br><kbd>A</kbd><kbd>D</kbd> swing left / right<br><kbd>W</kbd><kbd>S</kbd> lower / hoist the ball</div>
+      <div><b>Right stick</b><br><kbd>I</kbd><kbd>K</kbd> boom down / up<br><kbd>J</kbd> drag line in (release to throw) · <kbd>L</kbd> steady the sway</div>
       <div><b>Tracks</b><br><kbd>↑</kbd><kbd>↓</kbd> forward / reverse · <kbd>←</kbd><kbd>→</kbd> turn in place</div>
-      <div><b>Mission</b><br>Reach 75% demolition, then press <kbd>Enter</kbd><br>Bonus: scoop hidden treasures into the truck</div>
+      <div><b>Mission</b><br>Bring every yellow-ringed building down, then press <kbd>Enter</kbd><br>Don't hit the blue heritage house, and keep the boom off the buildings</div>
     </div>
     <div id="pairBox">
       <img id="pairQr" alt="Phone controller QR code">
@@ -109,8 +113,8 @@
         <p>Room <span id="pairRoom" class="room">----</span>　<span id="pairStatus" class="pairState">Waiting for phone…</span></p>
       </div>
     </div>
-    <p class="sub" style="margin-top:14px;font-size:13px">Keyboard and Xbox / PlayStation gamepads also work: sticks as above, D-pad for tracks, A to finish. Once your phone is connected, tap "Start engine" on it to begin.</p>
-    <button class="btn" id="startBtn">Start engine</button>
+    <p class="sub" style="margin-top:14px;font-size:13px">Keyboard and Xbox / PlayStation gamepads also work: sticks as above, D-pad for tracks, A to finish. Once your phone is connected, tap "Start" on it to begin.</p>
+    <button class="btn" id="startBtn">Start crane</button>
     <a class="btn ghost" href="/dashboard/" target="_blank" style="text-decoration:none">Open telemetry dashboard ↗</a>
   </div>
 </div>
@@ -122,7 +126,7 @@
     <div class="stars" id="rStars"></div>
     <table id="rTable"></table>
     <p class="sub" id="rRank" style="margin-top:14px"></p>
-    <button class="btn" id="againBtn">Demolish another</button>
+    <button class="btn" id="againBtn">Next lot</button>
     <a class="btn ghost" href="/dashboard/" target="_blank" style="text-decoration:none">View this run's data ↗</a>
   </div>
 </div>

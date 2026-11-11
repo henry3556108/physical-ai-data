@@ -1,32 +1,50 @@
-// 遠端都更挖土機：第一人稱 + Rapier 物理
+// Remote wrecking-ball crane: first-person cab + Rapier physics
 import * as THREE from 'three';
 import RAPIER from 'rapier';
 
 await RAPIER.init();
 
-// ====================== 常數 ======================
+// ====================== Constants ======================
 const DT = 1 / 60;
-const TIME_LIMIT = 240;          // 秒
-const FINISH_RATIO = 0.75;       // 拆除率達標門檻
-const SAMPLE_MS = 50;            // 20Hz 遙測
+const CLEAR_RATIO = 0.6;         // a building counts as "down" once 65% of its pieces have moved
+const SAMPLE_MS = 50;            // 20 Hz telemetry
 const UPLOAD_MS = 1000;
-const BRICK_DENSITY = 1800;
 const DEG = 180 / Math.PI;
+const G = 9.81;
 
-// 關節（數值是 three.js 的 rotation 值；大臂負值 = 抬高）
+// Crane joints. swing/boom in radians (boom = elevation above horizontal), hoist = cable length in metres.
 const JOINTS = {
-  swing:  { min: -Infinity, max: Infinity, speed: 0.7, dir: +1 },
-  boom:   { min: -1.05, max: 0.45, speed: 0.55, dir: +1 }, // 指令 + = 大臂下降
-  arm:    { min: 0.35, max: 2.7, speed: 0.75, dir: -1 },   // 指令 + = 小臂伸出
-  bucket: { min: -0.7, max: 2.4, speed: 1.1, dir: +1 },    // 指令 + = 收斗
+  swing: { min: -Infinity, max: Infinity, speed: 0.3, accel: 0.35, dir: +1 },
+  boom:  { min: 0.42, max: 1.36, speed: 0.16, accel: 0.3, dir: -1 },   // command + = boom down
+  hoist: { min: 3, max: 34, speed: 6.0, accel: 10.0, dir: +1 },         // command + = pay out (lower the ball)
 };
-const JOINT_ACCEL = 3.2;
-const START_POSE = { swing: 0, boom: -0.5, arm: 1.75, bucket: 0.7 };
+const JOINT_NAMES = Object.keys(JOINTS);
+const START_POSE = { swing: 0, boom: 1.2, hoist: 7 };
+const BOOM_L = 34;
+const BALL_R = 0.75, BALL_DENSITY = 7800;   // ~13.8 t
+const DRAG_ACC = 6.0;                       // drag-line pull (m/s²)
+const STEADY = 1.6;                         // anti-sway damping rate (1/s)
+const BREAK_SPEED = 1.5;                    // ball speed (m/s) needed to punch pieces out of a wall
+const BREAK_RADIUS = 2.6;                   // pieces within this distance of the ball surface take the hit
 
-// 場地配置
-const TARGET = { cx: 0, cz: 11, w: 6, d: 4.8, stories: 2, courses: 5, bh: 0.6, t: 0.4 };
-const NEIGHBOR = { cx: -8.6, cz: 11, w: 4.2, d: 4.2, stories: 1, courses: 5, bh: 0.6, t: 0.35 };
-const TRUCK = { cx: 8.2, cz: 5.5, w: 3.0, d: 4.6, floorY: 1.1, wallH: 1.0 };
+// Building kit: storey = wall height + slab
+const FH = 2.8, ST = 0.3, WT = 0.3, STORY = FH + ST;
+const TEMPLATES = [
+  { name: 'Slab block', style: 'punch', palette: [0xd8cfc0, 0xcfc5b4, 0xe0d8ca], vols: [{ w: 14, d: 7, floors: 7 }] },
+  { name: 'Point tower', style: 'ribbon', palette: [0xe8e8e4, 0xdcdcd6, 0xd2d4d0], vols: [{ w: 7.5, d: 7.5, floors: 10 }] },
+  { name: 'Wedding-cake tower', style: 'punch', palette: [0xd9b98c, 0xceac7d, 0xe2c497],
+    vols: [{ w: 12, d: 12, floors: 3 }, { w: 9, d: 9, from: 3, floors: 3 }, { w: 6, d: 6, from: 6, floors: 3 }] },
+  { name: 'Podium tower', style: 'ribbon', palette: [0xbfc6cc, 0xb3bac1, 0xc8ced3],
+    vols: [{ w: 15, d: 11, floors: 2, style: 'curtain' }, { w: 7, d: 7, from: 2, floors: 7 }] },
+  { name: 'Glass office', style: 'curtain', palette: [0x7fa6c8, 0x7099bd, 0x88afd0], vols: [{ w: 11, d: 9, floors: 8 }] },
+  { name: 'Twin towers', style: 'ribbon', palette: [0xc9c2b8, 0xbdb6ab, 0xd3cdc4],
+    vols: [{ ox: -4, w: 6, d: 6, floors: 9 }, { ox: 4, w: 6, d: 6, floors: 9 }] },
+  { name: 'Brick tenement', style: 'brick', panel: 1.7, palette: [0xa4553e, 0xb5654a, 0x9a4d38], vols: [{ w: 10, d: 8, floors: 6 }] },
+  { name: 'Parking garage', frame: true, palette: [0x9d9d98, 0xa8a8a2], vols: [{ w: 14, d: 10, floors: 5 }] },
+  { name: 'L-shaped apartments', style: 'punch', palette: [0xe6d3b0, 0xdcc8a2, 0xefdcbb],
+    vols: [{ ox: -3, oz: -3, w: 12, d: 6, floors: 7 }, { ox: 3, oz: 3.55, w: 6, d: 7, floors: 7 }] },
+];
+const HERITAGE = { name: 'Heritage house', style: 'punch', palette: [0x8fb0d0, 0x9dbcd9, 0x84a4c4], vols: [{ w: 8, d: 6, floors: 2 }] };
 
 // ====================== DOM ======================
 const $ = id => document.getElementById(id);
@@ -35,24 +53,25 @@ const ui = {
   startBtn: $('startBtn'), againBtn: $('againBtn'), playerName: $('playerName'),
   latency: $('latency'), latencyVal: $('latencyVal'),
   hud: ['hudTL', 'hudTR', 'hudB', 'help'].map($),
-  hTime: $('hTime'), hDemo: $('hDemo'), demoBar: $('demoBar').firstElementChild,
-  hTreasure: $('hTreasure'), hCollateral: $('hCollateral'), hLatency: $('hLatency'),
+  hTime: $('hTime'), hDemo: $('hDemo'), demoBar: $('demoBar').firstElementChild, hLot: $('hLot'),
+  hCleared: $('hCleared'), hCollateral: $('hCollateral'), hStrikes: $('hStrikes'), hLatency: $('hLatency'),
   hSamples: $('hSamples'), hView: $('hView'), hRec: $('hRec'), hPad: $('hPad'),
-  gSwing: $('gSwing'), gBoom: $('gBoom'), gArm: $('gArm'), gBucket: $('gBucket'),
+  gSwing: $('gSwing'), gBoom: $('gBoom'), gHoist: $('gHoist'), gBall: $('gBall'),
   loadBar: $('loadBar').firstElementChild, toast: $('toast'), finishHint: $('finishHint'),
   rTitle: $('rTitle'), rStars: $('rStars'), rTable: $('rTable'), rRank: $('rRank'),
   pairQr: $('pairQr'), pairUrl: $('pairUrl'), pairRoom: $('pairRoom'), pairStatus: $('pairStatus'),
+  lotPreview: $('lotPreview'),
 };
 const store = {
   get(k, d) { try { const v = localStorage.getItem('exc.' + k); return v == null ? d : v; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('exc.' + k, v); } catch { /* 無痕模式 */ } },
+  set(k, v) { try { localStorage.setItem('exc.' + k, v); } catch { /* private mode */ } },
 };
 ui.playerName.value = store.get('name', '');
 ui.latency.value = store.get('latency', '0');
 ui.latencyVal.textContent = ui.latency.value + ' ms';
 ui.latency.addEventListener('input', () => { ui.latencyVal.textContent = ui.latency.value + ' ms'; });
 
-// ====================== Three.js 場景 ======================
+// ====================== Three.js scene ======================
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -64,20 +83,20 @@ document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xa9c7e4);
-scene.fog = new THREE.Fog(0xa9c7e4, 60, 220);
+scene.fog = new THREE.Fog(0xa9c7e4, 110, 330);
 
 scene.add(new THREE.HemisphereLight(0xe3edff, 0x5a4a35, 1.0));
 const sun = new THREE.DirectionalLight(0xfff3dd, 2.4);
-sun.position.set(18, 30, -6);
-sun.target.position.set(0, 0, 8);
+sun.position.set(45, 80, -5);
+sun.target.position.set(0, 0, 22);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -22, right: 22, top: 22, bottom: -22, near: 1, far: 80 });
-sun.shadow.bias = -0.0005;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 220 });
+sun.shadow.bias = -0.0006;
 scene.add(sun, sun.target);
 
-const fpCam = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 400);
-const tpCam = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 400);
+const fpCam = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 600);
+const tpCam = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 600);
 let thirdPerson = false;
 addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
@@ -91,255 +110,372 @@ function box(w, h, d, material, x = 0, y = 0, z = 0, parent) {
   if (parent) parent.add(m);
   return m;
 }
-
-// 地面：程式產生的泥土貼圖
-function dirtTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 512;
-  const g = c.getContext('2d');
-  g.fillStyle = '#8a7558'; g.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 9000; i++) {
-    const v = 100 + Math.random() * 60;
-    g.fillStyle = `rgba(${v + 20},${v},${v - 30},${Math.random() * 0.35})`;
-    g.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 4, 2 + Math.random() * 4);
-  }
-  g.strokeStyle = 'rgba(60,45,30,.25)'; g.lineWidth = 2;
-  for (let i = 0; i <= 512; i += 64) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 512); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(512, i); g.stroke(); }
+function canvasTex(size, draw, repeat) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  draw(c.getContext('2d'), size);
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(40, 40); t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat); }
   return t;
 }
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ map: dirtTexture(), roughness: 1 }));
+
+// Ground: procedural dirt
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(700, 700), new THREE.MeshStandardMaterial({
+  roughness: 1,
+  map: canvasTex(512, (g) => {
+    g.fillStyle = '#8a7558'; g.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 9000; i++) {
+      const v = 100 + Math.random() * 60;
+      g.fillStyle = `rgba(${v + 20},${v},${v - 30},${Math.random() * 0.35})`;
+      g.fillRect(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 4, 2 + Math.random() * 4);
+    }
+    g.strokeStyle = 'rgba(60,45,30,.25)'; g.lineWidth = 2;
+    for (let i = 0; i <= 512; i += 64) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 512); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(512, i); g.stroke(); }
+  }, 70),
+}));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 
-// 背景：遠方城市量體與工地圍籬（純裝飾）
+// Background: distant skyline and the site hoarding (decoration only)
 {
   const cityMat = [mat(0x9aa3ad), mat(0xb3aa9c), mat(0x8c97a3), mat(0xc2bdb4)];
-  for (let i = 0; i < 46; i++) {
-    const a = (i / 46) * Math.PI * 2 + Math.random() * 0.05;
-    const r = 70 + Math.random() * 50;
-    const h = 8 + Math.random() * 38;
-    const b = box(8 + Math.random() * 10, h, 8 + Math.random() * 10, cityMat[i % 4], Math.cos(a) * r, h / 2, Math.sin(a) * r + 10);
+  for (let i = 0; i < 60; i++) {
+    const a = (i / 60) * Math.PI * 2 + Math.random() * 0.04;
+    const r = 130 + Math.random() * 60;
+    const h = 15 + Math.random() * 70;
+    const b = box(10 + Math.random() * 14, h, 10 + Math.random() * 14, cityMat[i % 4], Math.cos(a) * r, h / 2, Math.sin(a) * r + 20);
     b.castShadow = false;
     scene.add(b);
   }
-  const fenceA = mat(0xf5b800), fenceB = mat(0x1d1f22);
-  const R = 24;
-  for (let i = -R; i < R; i += 2) {
-    for (const [x, z, ry] of [[i + 1, 10 + R, 0], [i + 1, 10 - R, 0], [R, 10 + i + 1, Math.PI / 2], [-R, 10 + i + 1, Math.PI / 2]]) {
-      const p = box(2, 1.6, 0.08, (i / 2) % 2 ? fenceA : fenceB, x, 0.8, z); p.rotation.y = ry; scene.add(p);
-    }
-  }
+  const fence = [];
+  const X0 = -64, X1 = 64, Z0 = -26, Z1 = 74, P = 4;
+  for (let x = X0; x < X1; x += P) fence.push([x + P / 2, Z0, 0], [x + P / 2, Z1, 0]);
+  for (let z = Z0; z < Z1; z += P) fence.push([X0, z + P / 2, Math.PI / 2], [X1, z + P / 2, Math.PI / 2]);
+  const fm = new THREE.InstancedMesh(new THREE.BoxGeometry(P, 2.2, 0.1), mat(0xffffff), fence.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color();
+  fence.forEach(([x, z, ry], i) => {
+    fm.setMatrixAt(i, m4.compose(new THREE.Vector3(x, 1.1, z), q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ry), new THREE.Vector3(1, 1, 1)));
+    fm.setColorAt(i, c.setHex(i % 4 < 2 ? 0xf5b800 : 0x1d1f22));
+  });
+  fm.receiveShadow = true; scene.add(fm);
 }
 
-// ====================== Rapier 物理世界 ======================
+// Facade textures: tinted per piece by the instance colour
+const FACADE = {
+  punch: canvasTex(128, (g, s) => {
+    g.fillStyle = '#f4f2ee'; g.fillRect(0, 0, s, s);
+    g.fillStyle = '#d9d6cf'; g.fillRect(0, s * 0.94, s, s * 0.06);
+    const grd = g.createLinearGradient(0, s * 0.22, s, s * 0.72);
+    grd.addColorStop(0, '#5a6b7e'); grd.addColorStop(1, '#232c37');
+    g.fillStyle = grd; g.fillRect(s * 0.2, s * 0.22, s * 0.6, s * 0.48);
+    g.fillStyle = '#e8e5df'; g.fillRect(s * 0.18, s * 0.7, s * 0.64, s * 0.05);
+    g.fillRect(s * 0.49, s * 0.22, s * 0.02, s * 0.48);
+  }),
+  ribbon: canvasTex(128, (g, s) => {
+    g.fillStyle = '#f4f2ee'; g.fillRect(0, 0, s, s);
+    const grd = g.createLinearGradient(0, s * 0.3, 0, s * 0.72);
+    grd.addColorStop(0, '#6d8296'); grd.addColorStop(1, '#2a3440');
+    g.fillStyle = grd; g.fillRect(0, s * 0.3, s, s * 0.42);
+    g.fillStyle = '#cfd3d6'; for (const x of [0, 0.33, 0.66]) g.fillRect(s * x, s * 0.3, s * 0.025, s * 0.42);
+  }),
+  curtain: canvasTex(128, (g, s) => {
+    const grd = g.createLinearGradient(0, 0, s, s);
+    grd.addColorStop(0, '#e8f0f8'); grd.addColorStop(1, '#9fb2c4');
+    g.fillStyle = grd; g.fillRect(0, 0, s, s);
+    g.fillStyle = '#4b5562'; g.fillRect(0, s * 0.82, s, s * 0.18);
+    for (const x of [0, 0.5]) g.fillRect(s * x, 0, s * 0.03, s);
+    g.fillRect(0, s * 0.4, s, s * 0.02);
+  }),
+  brick: canvasTex(128, (g, s) => {
+    g.fillStyle = '#f0ece6'; g.fillRect(0, 0, s, s);
+    g.fillStyle = '#c9c3ba';
+    for (let r = 0; r < 16; r++) { g.fillRect(0, r * 8, s, 1.5); for (let k = 0; k < 6; k++) g.fillRect(((k * 24) + (r % 2) * 12) % s, r * 8, 1.5, 8); }
+    g.fillStyle = '#26303b'; g.fillRect(s * 0.28, s * 0.25, s * 0.44, s * 0.45);
+    g.fillStyle = '#e9e4dc'; g.fillRect(s * 0.25, s * 0.7, s * 0.5, s * 0.05);
+  }),
+};
+const facadeMat = {
+  punch: mat(0xffffff, { map: FACADE.punch, roughness: 0.85 }),
+  ribbon: mat(0xffffff, { map: FACADE.ribbon, roughness: 0.75 }),
+  curtain: mat(0xffffff, { map: FACADE.curtain, roughness: 0.25, metalness: 0.35 }),
+  brick: mat(0xffffff, { map: FACADE.brick, roughness: 0.95 }),
+};
+const structMat = mat(0xffffff, { roughness: 0.92 });
+
+// ====================== Rapier physics world ======================
 let world, eventQueue;
-const colliderTag = new Map(); // collider handle -> 'machine' | 'brick' | ...
+const colliderTag = new Map(); // collider handle -> 'machine' | 'boom' | 'ball' | 'target' | 'neighbor' | 'ground'
 function initWorld() {
-  world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  world = new RAPIER.World({ x: 0, y: -G, z: 0 });
   world.timestep = DT;
   world.integrationParameters.numSolverIterations = 8;
   eventQueue = new RAPIER.EventQueue(true);
-  colliderTag.clear();
+  colliderTag.clear(); pieceByCollider.clear();
   const g = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  world.createCollider(RAPIER.ColliderDesc.cuboid(200, 0.5, 200).setTranslation(0, -0.5, 0).setFriction(1.0), g);
+  const c = world.createCollider(RAPIER.ColliderDesc.cuboid(350, 0.5, 350).setTranslation(0, -0.5, 0).setFriction(1.0), g);
+  colliderTag.set(c.handle, 'ground');
 }
 
-// ====================== 挖土機（運動學剛體，由關節角度驅動） ======================
+// ====================== Crawler crane (kinematic bodies driven by joint values) ======================
+const red = mat(0xc8302a, { roughness: 0.5, metalness: 0.25 });
 const yellow = mat(0xf2b416, { roughness: 0.55, metalness: 0.2 });
 const darkSteel = mat(0x2b2e33, { roughness: 0.7, metalness: 0.4 });
 const blackRubber = mat(0x151617, { roughness: 0.95 });
 const steel = mat(0x6c7178, { roughness: 0.5, metalness: 0.6 });
+const cabMat = mat(0x24272c, { roughness: 0.6, metalness: 0.3 });
+const glass = new THREE.MeshStandardMaterial({ color: 0x9fc3d8, transparent: true, opacity: 0.1, roughness: 0.05, metalness: 0.2, depthWrite: false, side: THREE.DoubleSide });
 
 const rig = {};
 rig.chassis = new THREE.Group(); scene.add(rig.chassis);
-box(0.75, 0.9, 4.6, blackRubber, 1.25, 0.45, 0, rig.chassis);
-box(0.75, 0.9, 4.6, blackRubber, -1.25, 0.45, 0, rig.chassis);
-box(1.8, 0.5, 3.0, darkSteel, 0, 0.75, 0, rig.chassis);
+box(1.2, 1.2, 8.0, blackRubber, 2.4, 0.6, 0, rig.chassis);
+box(1.2, 1.2, 8.0, blackRubber, -2.4, 0.6, 0, rig.chassis);
+box(3.6, 0.6, 4.5, darkSteel, 0, 0.9, 0, rig.chassis);
+for (const x of [2.4, -2.4]) for (let z = -3.5; z <= 3.5; z += 0.5) box(1.25, 0.08, 0.18, darkSteel, x, 1.22, z, rig.chassis);
 
-rig.house = new THREE.Group(); rig.house.position.set(0, 1.0, 0); rig.chassis.add(rig.house);
-box(2.9, 1.0, 3.2, yellow, 0, 0.5, -0.3, rig.house);
-box(2.9, 0.9, 0.9, darkSteel, 0, 0.55, -2.2, rig.house); // 配重
-// 駕駛艙（左前方，x 為正）
-const cabMat = mat(0x24272c, { roughness: 0.6, metalness: 0.3 });
-const glass = new THREE.MeshStandardMaterial({ color: 0x9fc3d8, transparent: true, opacity: 0.1, roughness: 0.05, metalness: 0.2, depthWrite: false, side: THREE.DoubleSide });
+rig.house = new THREE.Group(); rig.house.position.set(0, 1.4, 0); rig.chassis.add(rig.house);
+box(4.0, 2.0, 6.4, red, 0, 1.0, -0.6, rig.house);
+box(4.2, 1.6, 1.6, darkSteel, 0, 1.1, -4.4, rig.house);         // counterweight
+box(4.2, 0.12, 0.3, yellow, 0, 1.95, -5.2, rig.house);           // counterweight stripe
+// Gantry (A-frame) that carries the boom pendants
+for (const x of [1.2, -1.2]) {
+  const p = box(0.22, 6.2, 0.22, steel, x, 4.6, -2.6, rig.house); p.rotation.x = -0.18;
+}
+box(2.7, 0.3, 0.3, steel, 0, 7.6, -2.05, rig.house);
+rig.gantryTop = new THREE.Object3D(); rig.gantryTop.position.set(0, 7.7, -2.05); rig.house.add(rig.gantryTop);
+rig.fairlead = new THREE.Object3D(); rig.fairlead.position.set(0, 1.4, 2.8); rig.house.add(rig.fairlead);
+box(0.8, 0.5, 0.4, darkSteel, 0, 1.4, 2.65, rig.house);          // drag-line fairlead
+// Operator cab on the left front (local +x)
 {
   const H = rig.house;
-  // 支柱
-  for (const [x, z] of [[0.42, 1.0], [1.38, 1.0], [0.42, -0.2], [1.38, -0.2]]) box(0.07, 1.9, 0.07, cabMat, x, 1.95, z, H);
-  box(1.0, 0.08, 1.28, yellow, 0.9, 2.92, 0.4, H);      // 車頂
-  box(1.0, 0.06, 0.07, cabMat, 0.9, 2.86, 1.0, H);      // 前上框
-  box(1.0, 0.22, 0.07, cabMat, 0.9, 1.12, 1.0, H);      // 前下框（儀表板）
-  box(0.5, 0.1, 0.35, darkSteel, 0.9, 1.25, 0.75, H);   // 儀表
-  const gl = (w, h, x, y, z, ry = 0) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), glass); m.position.set(x, y, z); m.rotation.y = ry; H.add(m); };
-  gl(0.92, 1.7, 0.9, 1.95, 1.0); gl(1.2, 1.8, 0.42, 1.95, 0.4, Math.PI / 2); gl(1.2, 1.8, 1.38, 1.95, 0.4, Math.PI / 2);
-  // 操作桿（視覺）
-  for (const x of [0.62, 1.18]) { box(0.04, 0.3, 0.04, cabMat, x, 1.3, 0.35, H); box(0.08, 0.1, 0.08, mat(0x111111), x, 1.47, 0.35, H); }
+  box(1.2, 0.2, 2.2, cabMat, 2.65, 0.9, 1.3, H);                  // floor
+  for (const [x, z] of [[2.07, 2.4], [3.23, 2.4], [2.07, 0.2], [3.23, 0.2]]) box(0.07, 2.1, 0.07, cabMat, x, 2.05, z, H);
+  box(1.25, 0.08, 2.3, red, 2.65, 3.12, 1.3, H);                  // roof
+  box(1.2, 0.3, 0.07, cabMat, 2.65, 1.15, 2.4, H);               // dash
+  box(0.6, 0.12, 0.35, darkSteel, 2.65, 1.32, 2.15, H);
+  box(1.2, 0.95, 0.07, cabMat, 2.65, 1.45, 0.2, H);              // rear wall
+  const gl = (w, h, x, y, z, ry = 0, rx = 0) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), glass); m.position.set(x, y, z); m.rotation.set(rx, ry, 0, 'YXZ'); H.add(m); };
+  gl(1.12, 1.8, 2.65, 2.15, 2.4); gl(2.2, 1.9, 2.07, 2.05, 1.3, Math.PI / 2); gl(2.2, 1.9, 3.23, 2.05, 1.3, Math.PI / 2);
+  gl(1.1, 1.6, 2.65, 3.08, 1.6, 0, -Math.PI / 2);                 // roof window: look up at the boom
+  for (const x of [2.35, 2.95]) { box(0.04, 0.3, 0.04, cabMat, x, 1.3, 1.65, H); box(0.08, 0.1, 0.08, mat(0x111111), x, 1.47, 1.65, H); }
 }
-// 第一人稱鏡頭
-rig.camMount = new THREE.Group(); rig.camMount.position.set(0.9, 1.75, 0.3); rig.camMount.rotation.y = Math.PI;
+rig.camMount = new THREE.Group(); rig.camMount.position.set(2.65, 2.15, 1.35); rig.camMount.rotation.y = Math.PI;
 rig.house.add(rig.camMount);
 fpCam.rotation.order = 'YXZ';
 rig.camMount.add(fpCam);
 
-const BOOM_L = 5.6, ARM_L = 2.9;
-rig.boomPivot = new THREE.Group(); rig.boomPivot.position.set(-0.3, 0.95, 1.1); rig.house.add(rig.boomPivot);
-box(0.5, 0.65, BOOM_L, yellow, 0, 0, BOOM_L / 2, rig.boomPivot);
-box(0.16, 0.16, BOOM_L * 0.7, steel, 0, -0.45, BOOM_L * 0.4, rig.boomPivot); // 油壓缸
-rig.armPivot = new THREE.Group(); rig.armPivot.position.set(0, 0, BOOM_L); rig.boomPivot.add(rig.armPivot);
-box(0.42, 0.48, ARM_L, yellow, 0, 0, ARM_L / 2, rig.armPivot);
-box(0.12, 0.12, ARM_L * 0.8, steel, 0, 0.35, ARM_L * 0.45, rig.armPivot);
-rig.bucketPivot = new THREE.Group(); rig.bucketPivot.position.set(0, 0, ARM_L); rig.armPivot.add(rig.bucketPivot);
-// 挖斗：開口朝區域 -Y
-const BUCKET_PARTS = [
-  [0.62, 0.05, 0.72, 0, 0.05, 0.72],      // 背板
-  [0.05, 0.38, 0.64, 0.62, -0.33, 0.74],  // 側板
-  [0.05, 0.38, 0.64, -0.62, -0.33, 0.74],
-  [0.62, 0.36, 0.05, 0, -0.33, 0.05],     // 底板
-  [0.62, 0.12, 0.05, 0, -0.08, 1.42],     // 斗齒
-];
-for (const [hx, hy, hz, x, y, z] of BUCKET_PARTS) box(hx * 2, hy * 2, hz * 2, darkSteel, x, y, z, rig.bucketPivot);
-for (let i = -2; i <= 2; i++) box(0.1, 0.08, 0.22, steel, i * 0.28, -0.12, 1.55, rig.bucketPivot);
-rig.tip = new THREE.Object3D(); rig.tip.position.set(0, -0.05, 1.5); rig.bucketPivot.add(rig.tip);
-rig.heel = new THREE.Object3D(); rig.heel.position.set(0, -0.7, 0.05); rig.bucketPivot.add(rig.heel);
-rig.back = new THREE.Object3D(); rig.back.position.set(0, 0.1, 0.72); rig.bucketPivot.add(rig.back);
-rig.mouthL = new THREE.Object3D(); rig.mouthL.position.set(0, -0.7, 1.4); rig.bucketPivot.add(rig.mouthL);
-rig.cavity = new THREE.Object3D(); rig.cavity.position.set(0, -0.35, 0.75); rig.bucketPivot.add(rig.cavity);
+// Lattice boom: four chords + instanced lacing
+rig.boomPivot = new THREE.Group(); rig.boomPivot.position.set(0, 2.2, 2.0); rig.house.add(rig.boomPivot);
+{
+  const B = rig.boomPivot, hw = 0.6;
+  for (const [x, y] of [[hw, hw], [-hw, hw], [hw, -hw], [-hw, -hw]]) box(0.14, 0.14, BOOM_L, red, x, y, BOOM_L / 2, B);
+  box(1.6, 1.0, 1.2, red, 0, 0, 0.3, B);                                   // foot
+  box(1.4, 1.4, 1.0, red, 0, 0, BOOM_L - 0.3, B);                           // head
+  const sheave = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.3, 16), darkSteel);
+  sheave.rotation.z = Math.PI / 2; sheave.position.set(0, -0.2, BOOM_L + 0.2); B.add(sheave);
+  const SEG = 1.7, n = Math.floor((BOOM_L - 1.6) / SEG), mats = [];
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), pos = new THREE.Vector3(), sc = new THREE.Vector3();
+  const diagLen = Math.hypot(2 * hw, SEG);
+  for (let i = 0; i < n; i++) {
+    const z = 1.0 + SEG * (i + 0.5), flip = i % 2 ? 1 : -1;
+    const tilt = Math.atan2(2 * hw, SEG) * flip;
+    for (const y of [hw, -hw]) { e.set(0, tilt, 0); mats.push(m4.compose(pos.set(0, y, z), q.setFromEuler(e), sc.set(0.07, 0.07, diagLen)).clone()); }
+    for (const x of [hw, -hw]) { e.set(tilt, 0, 0); mats.push(m4.compose(pos.set(x, 0, z), q.setFromEuler(e), sc.set(0.07, 0.07, diagLen)).clone()); }
+  }
+  const lacing = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), steel, mats.length);
+  mats.forEach((m, i) => lacing.setMatrixAt(i, m));
+  lacing.castShadow = true; B.add(lacing);
+}
+rig.tip = new THREE.Object3D(); rig.tip.position.set(0, -0.6, BOOM_L + 0.2); rig.boomPivot.add(rig.tip);
+rig.pendant = new THREE.Object3D(); rig.pendant.position.set(0, 0.7, BOOM_L - 0.4); rig.boomPivot.add(rig.pendant);
+
+// Ropes are cylinders re-stretched every frame between two world points
+const ropeMat = mat(0x1c1d1f, { metalness: 0.6, roughness: 0.45 });
+function rope(r) { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 6, 1), ropeMat); m.castShadow = true; m.frustumCulled = false; scene.add(m); return m; }
+const ropes = { hoist: rope(0.045), drag: rope(0.04), pendL: rope(0.05), pendR: rope(0.05) };
+const _up = new THREE.Vector3(0, 1, 0), _rd = new THREE.Vector3();
+function stretchRope(m, a, b) {
+  _rd.subVectors(b, a); const len = _rd.length();
+  m.position.addVectors(a, b).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(_up, _rd.divideScalar(len || 1));
+  m.scale.set(1, Math.max(len, 0.01), 1);
+}
+
+// Wrecking ball visual
+const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 28, 20), mat(0x2a2c30, { metalness: 0.75, roughness: 0.38 }));
+ballMesh.castShadow = true; scene.add(ballMesh);
+const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.06, 8, 16), steel);
+shackle.castShadow = true; scene.add(shackle);
 
 const machine = { parts: [] }; // { obj, body }
+const ball = { body: null, mass: 0 };
 function createMachineBodies() {
   machine.parts = [];
-  const mk = (obj, shapes) => {
+  const mk = (obj, shapes, tag, physical = true) => {
     obj.updateWorldMatrix(true, false);
     const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
     obj.matrixWorld.decompose(p, q, s);
     const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(p.x, p.y, p.z).setRotation(q));
     for (const [hx, hy, hz, x, y, z] of shapes) {
+      if (!physical) continue;
       const c = world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setTranslation(x, y, z).setFriction(0.9)
-        .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS).setContactForceEventThreshold(300), body);
-      colliderTag.set(c.handle, 'machine');
+        .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS).setContactForceEventThreshold(2000), body);
+      colliderTag.set(c.handle, tag);
     }
-    machine.parts.push({ obj, body });
+    machine.parts.push({ obj, body, tag, shapes: shapes.map(([hx, hy, hz, x, y, z]) => ({ shape: new RAPIER.Cuboid(hx, hy, hz), off: new THREE.Vector3(x, y, z) })) });
   };
-  mk(rig.chassis, [[1.65, 0.48, 2.3, 0, 0.48, 0]]);
-  mk(rig.house, [[1.45, 0.5, 1.6, 0, 0.5, -0.3], [0.5, 0.95, 0.62, 0.9, 1.95, 0.4]]);
-  mk(rig.boomPivot, [[0.25, 0.33, BOOM_L / 2 - 0.3, 0, 0, BOOM_L / 2 + 0.3]]);
-  mk(rig.armPivot, [[0.21, 0.24, ARM_L / 2, 0, 0, ARM_L / 2]]);
-  mk(rig.bucketPivot, BUCKET_PARTS);
+  mk(rig.chassis, [[3.0, 0.6, 4.0, 0, 0.6, 0]], 'machine');
+  mk(rig.house, [[2.1, 1.0, 3.4, 0, 1.0, -0.8], [0.6, 1.1, 1.1, 2.65, 2.0, 1.3]], 'machine');
+  // The boom never pushes buildings: it is only used for overlap checks that stop the crane (see rigBlocked)
+  mk(rig.boomPivot, [[0.7, 0.7, BOOM_L / 2 - 2, 0, 0, BOOM_L / 2 + 1.5]], 'boom', false);
+  // The ball: a heavy dynamic sphere hanging on a one-sided cable constraint (see physicsStep)
+  rig.tip.getWorldPosition(_v);
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(_v.x, _v.y - game.joints.hoist, _v.z)
+    .setCcdEnabled(true).setCanSleep(false).setLinearDamping(0.02).setAngularDamping(1.5));
+  const c = world.createCollider(RAPIER.ColliderDesc.ball(BALL_R).setDensity(BALL_DENSITY).setFriction(0.6).setRestitution(0.1)
+    .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS).setContactForceEventThreshold(20000), body);
+  colliderTag.set(c.handle, 'ball');
+  ball.body = body; ball.mass = body.mass();
+  game.prevTip.copy(_v);
 }
 
-// ====================== 建築（可破壞的磚塊堆疊） ======================
+// ====================== Buildings (stacked wall panels + floor slabs) ======================
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
-const level = { houses: [], treasures: [], extraMeshes: [] };
+const level = { houses: [], extraMeshes: [] };
+const pieceByCollider = new Map();
 
-function buildHouse(cfg, palette, kind) {
-  const bricks = []; // { body, size:[w,h,d], origin:Vector3, color }
-  const add = (w, h, d, x, y, z, color, density = BRICK_DENSITY) => {
-    const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y, z).setSleeping(true)
-      .setLinearDamping(0.05).setAngularDamping(0.1));
-    const c = world.createCollider(RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2).setDensity(density).setFriction(0.85).setRestitution(0.02), body);
+function footprintRadius(t) {
+  let r = 0;
+  for (const v of t.vols) for (const sx of [-1, 1]) for (const sz of [-1, 1]) r = Math.max(r, Math.hypot((v.ox || 0) + sx * v.w / 2, (v.oz || 0) + sz * v.d / 2));
+  return r;
+}
+function buildBuilding(tpl, cx, cz, yaw, kind) {
+  const cos = Math.cos(yaw), sin = Math.sin(yaw);
+  const rot = { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) };
+  const pieces = [];
+  const pick = () => tpl.palette[(Math.random() * tpl.palette.length) | 0];
+  const add = (group, lx, y, lz, w, h, d, color, density) => {
+    const x = cx + lx * cos + lz * sin, z = cz - lx * sin + lz * cos;
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y, z).setRotation(rot).setSleeping(true)
+      .setLinearDamping(0.05).setAngularDamping(0.15));
+    const c = world.createCollider(RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2).setDensity(density).setFriction(0.6).setRestitution(0.02), body);
     colliderTag.set(c.handle, kind);
-    bricks.push({ body, size: [w, h, d], origin: new THREE.Vector3(x, y, z), color });
+    const piece = { group, body, collider: c, size: [w, h, d], origin: new THREE.Vector3(x, y, z), color, moved: false, broken: false, idx: 0 };
+    pieceByCollider.set(c.handle, piece);
+    pieces.push(piece);
   };
-  const { cx, cz, w, d, bh, t } = cfg;
-  let base = 0;
-  for (let s = 0; s < cfg.stories; s++) {
-    for (let c = 0; c < cfg.courses; c++) {
-      const y = base + c * bh + bh / 2;
-      const even = (c + s) % 2 === 0;
-      const longLen = even ? w : w - 2 * t;      // 沿 X 的牆
-      const shortLen = even ? d - 2 * t : d;     // 沿 Z 的牆
-      const nl = Math.max(1, Math.round(longLen / 1.2)), ns = Math.max(1, Math.round(shortLen / 1.2));
-      const pick = () => palette[(Math.random() * palette.length) | 0];
+  const slabs = (v, base) => {
+    const y = base + FH + ST / 2, ox = v.ox || 0, oz = v.oz || 0, sc = 0x9c9a94;
+    if (v.w >= 8) for (const s of [-1, 1]) add('struct', ox + s * v.w / 4, y, oz, v.w / 2 - 0.02, ST - 0.004, v.d, sc, 1100);
+    else add('struct', ox, y, oz, v.w, ST - 0.004, v.d, sc, 1100);
+  };
+  for (const v of tpl.vols) {
+    const ox = v.ox || 0, oz = v.oz || 0, from = v.from || 0, P = tpl.panel || 2.6;
+    const style = v.style || tpl.style;
+    for (let f = 0; f < v.floors; f++) {
+      const base = (from + f) * STORY, y = base + FH / 2;
+      if (tpl.frame) {
+        const nx = Math.max(2, Math.round(v.w / 4.5) + 1), nz = Math.max(2, Math.round(v.d / 4.5) + 1);
+        for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) {
+          add('struct', ox - v.w / 2 + 0.4 + (v.w - 0.8) * i / (nx - 1), y, oz - v.d / 2 + 0.4 + (v.d - 0.8) * k / (nz - 1), 0.6, FH - 0.004, 0.6, pick(), 2400);
+        }
+        // Low parapets so it still reads as a car park
+        slabs(v, base);
+        continue;
+      }
+      const even = (from + f) % 2 === 0;
+      const longLen = even ? v.w : v.w - 2 * WT, shortLen = even ? v.d - 2 * WT : v.d;
+      const nl = Math.max(1, Math.round(longLen / P)), ns = Math.max(1, Math.round(shortLen / P));
       for (const zs of [-1, 1]) for (let i = 0; i < nl; i++) {
         const bl = longLen / nl;
-        add(bl - 0.004, bh - 0.002, t, cx - longLen / 2 + bl * (i + 0.5), y, cz + zs * (d / 2 - t / 2), pick());
+        add(style, ox - longLen / 2 + bl * (i + 0.5), y, oz + zs * (v.d / 2 - WT / 2), bl - 0.01, FH - 0.004, WT, pick(), 1200);
       }
       for (const xs of [-1, 1]) for (let i = 0; i < ns; i++) {
         const bl = shortLen / ns;
-        add(t, bh - 0.002, bl - 0.004, cx + xs * (w / 2 - t / 2), y, cz - shortLen / 2 + bl * (i + 0.5), pick());
+        add(style, ox + xs * (v.w / 2 - WT / 2), y, oz - shortLen / 2 + bl * (i + 0.5), WT, FH - 0.004, bl - 0.01, pick(), 1200);
       }
+      slabs(v, base);
     }
-    base += cfg.courses * bh;
-    // 樓板（分成兩片，拆起來比較有層次）
-    for (const xs of [-1, 1]) add(w / 2 - 0.01, 0.3, d, cx + xs * w / 4, base + 0.15, cz, 0x9a9a95, 700);
-    base += 0.3;
   }
-  // 視覺：InstancedMesh
-  const mesh = new THREE.InstancedMesh(unitBox, mat(0xffffff, { roughness: 0.9 }), bricks.length);
-  mesh.castShadow = mesh.receiveShadow = true;
+  // One InstancedMesh per material group
+  const meshes = {};
+  const groups = [...new Set(pieces.map(p => p.group))];
   const col = new THREE.Color();
-  bricks.forEach((b, i) => mesh.setColorAt(i, col.setHex(b.color)));
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  scene.add(mesh);
-  const house = { kind, bricks, mesh, displaced: 0 };
+  for (const gname of groups) {
+    const list = pieces.filter(p => p.group === gname);
+    const mesh = new THREE.InstancedMesh(unitBox, gname === 'struct' ? structMat : facadeMat[gname], list.length);
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    list.forEach((p, i) => { p.idx = i; p.mesh = mesh; mesh.setColorAt(i, col.setHex(p.color)); });
+    scene.add(mesh); meshes[gname] = mesh;
+  }
+  // Ground marker: yellow for targets, blue for the protected building
+  const r = footprintRadius(tpl) + 1.2;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(r, r + 0.35, 64), new THREE.MeshBasicMaterial({ color: kind === 'target' ? 0xf5b800 : 0x4da3ff, transparent: true, opacity: 0.7 }));
+  ring.rotation.x = -Math.PI / 2; ring.position.set(cx, 0.03, cz); scene.add(ring); level.extraMeshes.push(ring);
+  const house = { kind, name: tpl.name, pieces, meshes, ratio: 0, cleared: false, center: new THREE.Vector3(cx, 0, cz), r: footprintRadius(tpl) };
   level.houses.push(house);
   return house;
 }
 
-const TREASURE_TYPES = [
-  { name: 'Gold bar', size: [0.55, 0.28, 0.32], color: 0xffcc33, pts: 300, emissive: 0x664400 },
-  { name: 'Antique vase', size: [0.38, 0.6, 0.38], color: 0x2bb3a3, pts: 400, emissive: 0x0a3a35 },
-  { name: 'Old safe', size: [0.6, 0.6, 0.6], color: 0x3f5f3a, pts: 500, emissive: 0x1a2a10 },
-  { name: 'Jade pendant', size: [0.35, 0.18, 0.35], color: 0x7fe0a0, pts: 600, emissive: 0x1a5a30 },
-];
-function placeTreasures(n) {
-  const { cx, cz, w, d, courses, bh } = TARGET;
-  for (let i = 0; i < n; i++) {
-    const tp = TREASURE_TYPES[(Math.random() * TREASURE_TYPES.length) | 0];
-    const upstairs = i === n - 1 && Math.random() < 0.5;
-    const x = cx + (Math.random() - 0.5) * (w - 2.0);
-    const z = cz + (Math.random() - 0.5) * (d - 1.8);
-    const y = (upstairs ? courses * bh + 0.3 : 0) + tp.size[1] / 2 + 0.01;
-    const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y, z).setSleeping(true).setCcdEnabled(true));
-    const c = world.createCollider(RAPIER.ColliderDesc.cuboid(...tp.size.map(s => s / 2)).setDensity(900).setFriction(1.0), body);
-    colliderTag.set(c.handle, 'treasure');
-    const m = box(...tp.size, mat(tp.color, { emissive: tp.emissive, emissiveIntensity: 0.6, metalness: 0.5, roughness: 0.35 }));
-    scene.add(m); level.extraMeshes.push(m);
-    level.treasures.push({ ...tp, body, mesh: m, delivered: false });
+function signPost(text, x, z, faceYaw, color) {
+  const tex = canvasTex(256, (g, s) => {
+    g.fillStyle = color; g.fillRect(0, 0, s, s);
+    g.fillStyle = '#fff'; g.font = 'bold 44px system-ui,sans-serif'; g.textAlign = 'center';
+    text.split('\n').forEach((l, i) => g.fillText(l, s / 2, 100 + i * 56));
+  });
+  const grp = new THREE.Group();
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+  board.position.y = 3.6; grp.add(board);
+  box(0.12, 2.2, 0.12, steel, 0, 1.1, 0, grp);
+  grp.position.set(x, 0, z); grp.rotation.y = faceYaw;
+  scene.add(grp); level.extraMeshes.push(grp);
+}
+
+// Pick 1–3 random templates and place them in a fan in front of the crane, plus one protected house
+function generateLot() {
+  // ?lot=0,4 forces specific templates (handy for demos and recordings)
+  const forced = (new URLSearchParams(location.search).get('lot') || '').split(',').map(Number).filter(i => TEMPLATES[i]).slice(0, 3);
+  const n = 1 + ((Math.random() * 3) | 0);
+  const pool = forced.length ? forced.map(i => TEMPLATES[i]) : [...TEMPLATES].sort(() => Math.random() - 0.5).slice(0, n);
+  const placed = [];
+  const tryPlace = (tpl, rMin, rMax) => {
+    const br = footprintRadius(tpl);
+    for (let k = 0; k < 400; k++) {
+      const grow = Math.floor(k / 80) * 5;
+      const a = (Math.random() * 2 - 1) * 1.35, r = rMin + br + grow + Math.random() * (rMax - rMin);
+      const x = Math.sin(a) * r, z = Math.cos(a) * r;
+      if (placed.every(p => Math.hypot(p.x - x, p.z - z) > p.br + br + 4)) {
+        const yaw = Math.atan2(x, z) + (Math.random() < 0.5 ? 0 : Math.PI / 2);
+        const item = { tpl, x, z, br, yaw };
+        placed.push(item);
+        return item;
+      }
+    }
+    return null;
+  };
+  const targets = pool.map(t => tryPlace(t, 16, 9)).filter(Boolean);
+  const keep = tryPlace(HERITAGE, 14, 16);
+  for (const p of targets) buildBuilding(p.tpl, p.x, p.z, p.yaw, 'target');
+  if (keep) {
+    buildBuilding(HERITAGE, keep.x, keep.z, keep.yaw, 'neighbor');
+    const toCrane = Math.atan2(-keep.x, -keep.z);
+    signPost('HERITAGE\nDO NOT\nDEMOLISH', keep.x - Math.sin(Math.atan2(keep.x, keep.z)) * (keep.br + 3), keep.z - Math.cos(Math.atan2(keep.x, keep.z)) * (keep.br + 3), toCrane, '#1f6fd1');
   }
 }
 
-function buildTruck() {
-  const { cx, cz, w, d, floorY, wallH } = TRUCK;
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  const parts = [
-    [w / 2, floorY / 2, d / 2, cx, floorY / 2, cz, 0x3a3f46],              // 車斗底座
-    [0.06, wallH / 2, d / 2, cx - w / 2, floorY + wallH / 2, cz, 0xd9d4c7], // 側板
-    [0.06, wallH / 2, d / 2, cx + w / 2, floorY + wallH / 2, cz, 0xd9d4c7],
-    [w / 2, wallH / 2, 0.06, cx, floorY + wallH / 2, cz - d / 2, 0xd9d4c7],
-    [w / 2, wallH / 2, 0.06, cx, floorY + wallH / 2, cz + d / 2, 0xd9d4c7],
-    [w / 2, 1.1, 0.9, cx, 1.1, cz + d / 2 + 1.0, 0x2f6fb5],                  // 車頭
-  ];
-  for (const [hx, hy, hz, x, y, z, color] of parts) {
-    world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setTranslation(x, y, z).setFriction(0.9), body);
-    const m = box(hx * 2, hy * 2, hz * 2, mat(color), x, y, z); scene.add(m); level.extraMeshes.push(m);
-  }
-  // 車斗標示
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.2, d - 0.2), new THREE.MeshBasicMaterial({ color: 0xf5b800, transparent: true, opacity: 0.25 }));
-  sign.rotation.x = -Math.PI / 2; sign.position.set(cx, floorY + 0.01, cz); scene.add(sign); level.extraMeshes.push(sign);
-}
-function inTruck(p) {
-  const { cx, cz, w, d, floorY, wallH } = TRUCK;
-  return Math.abs(p.x - cx) < w / 2 && Math.abs(p.z - cz) < d / 2 && p.y > floorY - 0.05 && p.y < floorY + wallH + 1.0;
-}
-
-// ====================== 粒子（粉塵） ======================
-const DUST_N = 400;
-const dust = {
-  pos: new Float32Array(DUST_N * 3), vel: new Float32Array(DUST_N * 3), life: new Float32Array(DUST_N), i: 0,
-};
+// ====================== Particles (dust) ======================
+const DUST_N = 700;
+const dust = { pos: new Float32Array(DUST_N * 3), vel: new Float32Array(DUST_N * 3), life: new Float32Array(DUST_N), i: 0 };
 const dustGeo = new THREE.BufferGeometry();
 dustGeo.setAttribute('position', new THREE.BufferAttribute(dust.pos, 3));
-const dustPts = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xcdbb9c, size: 0.28, transparent: true, opacity: 0.6, depthWrite: false }));
+const dustPts = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xcdbb9c, size: 0.6, transparent: true, opacity: 0.55, depthWrite: false }));
 dustPts.frustumCulled = false; scene.add(dustPts);
 for (let i = 0; i < DUST_N; i++) dust.pos[i * 3 + 1] = -100;
-function emitDust(p, n) {
+function emitDust(p, n, spread = 1) {
   for (let k = 0; k < n; k++) {
     const i = dust.i = (dust.i + 1) % DUST_N;
-    dust.pos.set([p.x + (Math.random() - .5) * .6, p.y + Math.random() * .4, p.z + (Math.random() - .5) * .6], i * 3);
-    dust.vel.set([(Math.random() - .5) * 2.2, 0.6 + Math.random() * 1.8, (Math.random() - .5) * 2.2], i * 3);
-    dust.life[i] = 1.2 + Math.random();
+    dust.pos.set([p.x + (Math.random() - .5) * spread, p.y + Math.random() * .5, p.z + (Math.random() - .5) * spread], i * 3);
+    dust.vel.set([(Math.random() - .5) * 3, 0.4 + Math.random() * 2, (Math.random() - .5) * 3], i * 3);
+    dust.life[i] = 1.5 + Math.random() * 1.5;
   }
 }
 function updateDust(dt) {
@@ -347,50 +483,50 @@ function updateDust(dt) {
     if (dust.life[i] <= 0) continue;
     dust.life[i] -= dt;
     for (let a = 0; a < 3; a++) dust.pos[i * 3 + a] += dust.vel[i * 3 + a] * dt;
-    dust.vel[i * 3 + 1] -= 0.6 * dt;
+    dust.vel[i * 3 + 1] -= 0.5 * dt;
     if (dust.life[i] <= 0) dust.pos[i * 3 + 1] = -100;
   }
   dustGeo.attributes.position.needsUpdate = true;
 }
 
-// ====================== 音效（WebAudio 即時合成） ======================
+// ====================== Audio (synthesised live with WebAudio) ======================
 const audio = { ctx: null };
 function initAudio() {
   if (audio.ctx) return;
   try {
     const ctx = new AudioContext();
     const master = ctx.createGain(); master.gain.value = 0.5; master.connect(ctx.destination);
-    const eng = ctx.createOscillator(); eng.type = 'sawtooth'; eng.frequency.value = 48;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 380;
+    const eng = ctx.createOscillator(); eng.type = 'sawtooth'; eng.frequency.value = 42;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
     const eg = ctx.createGain(); eg.gain.value = 0.09;
     eng.connect(lp).connect(eg).connect(master); eng.start();
-    const hyd = ctx.createOscillator(); hyd.type = 'triangle'; hyd.frequency.value = 320;
+    const hyd = ctx.createOscillator(); hyd.type = 'triangle'; hyd.frequency.value = 220;
     const hg = ctx.createGain(); hg.gain.value = 0;
     hyd.connect(hg).connect(master); hyd.start();
-    const noise = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
+    const noise = ctx.createBuffer(1, ctx.sampleRate * 0.9, ctx.sampleRate);
     const ch = noise.getChannelData(0); for (let i = 0; i < ch.length; i++) ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / ch.length, 2);
     Object.assign(audio, { ctx, master, eng, lp, eg, hyd, hg, noise, lastHit: 0 });
-  } catch { /* 沒聲音也能玩 */ }
+  } catch { /* still playable without sound */ }
 }
 function audioUpdate(activity, load) {
   if (!audio.ctx) return;
   const t = audio.ctx.currentTime;
-  audio.eng.frequency.setTargetAtTime(46 + activity * 18 + load * 26, t, 0.15);
-  audio.lp.frequency.setTargetAtTime(340 + activity * 260 + load * 500, t, 0.15);
-  audio.hyd.frequency.setTargetAtTime(260 + activity * 180 + load * 120, t, 0.1);
-  audio.hg.gain.setTargetAtTime(0.012 * activity + 0.02 * load, t, 0.08);
+  audio.eng.frequency.setTargetAtTime(40 + activity * 16 + load * 20, t, 0.2);
+  audio.lp.frequency.setTargetAtTime(300 + activity * 240 + load * 400, t, 0.2);
+  audio.hyd.frequency.setTargetAtTime(180 + activity * 160, t, 0.1);
+  audio.hg.gain.setTargetAtTime(0.014 * activity, t, 0.08);
 }
-function audioHit(strength, freq = 700) {
+function audioHit(strength, freq = 500) {
   if (!audio.ctx || strength < 0.04) return;
-  const now = performance.now(); if (now - audio.lastHit < 70) return; audio.lastHit = now;
+  const now = performance.now(); if (now - audio.lastHit < 80) return; audio.lastHit = now;
   const src = audio.ctx.createBufferSource(); src.buffer = audio.noise;
   const f = audio.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = freq;
-  const g = audio.ctx.createGain(); g.gain.value = Math.min(1, strength) * 0.9;
+  const g = audio.ctx.createGain(); g.gain.value = Math.min(1, strength);
   src.connect(f).connect(g).connect(audio.master); src.start();
 }
 
-// ====================== 輸入：鍵盤 / 手把 / 手機 ======================
-const AXES = ['swing', 'arm', 'boom', 'bucket', 'drive', 'turn'];
+// ====================== Input: keyboard / gamepad / phone ======================
+const AXES = ['swing', 'hoist', 'boom', 'drag', 'drive', 'turn'];
 const keys = new Set();
 addEventListener('keydown', e => {
   if (document.activeElement && document.activeElement.tagName === 'INPUT') {
@@ -415,14 +551,14 @@ addEventListener('blur', () => keys.clear());
 const kAxis = (pos, neg) => (keys.has(pos) ? 1 : 0) - (keys.has(neg) ? 1 : 0);
 function keyboardInput() {
   return {
-    swing: kAxis('KeyA', 'KeyD'), arm: kAxis('KeyW', 'KeyS'), boom: kAxis('KeyI', 'KeyK'),
-    bucket: kAxis('KeyJ', 'KeyL'), drive: kAxis('ArrowUp', 'ArrowDown'), turn: kAxis('ArrowLeft', 'ArrowRight'),
+    swing: kAxis('KeyA', 'KeyD'), hoist: kAxis('KeyW', 'KeyS'), boom: kAxis('KeyI', 'KeyK'),
+    drag: kAxis('KeyJ', 'KeyL'), drive: kAxis('ArrowUp', 'ArrowDown'), turn: kAxis('ArrowLeft', 'ArrowRight'),
   };
 }
 const dz = v => Math.abs(v) < 0.12 ? 0 : (v - Math.sign(v) * 0.12) / 0.88;
-// 搖桿原始值（右/下為正）→ 關節指令
+// Raw stick values (right/down positive) → crane commands
 function sticksToAxes(lx, ly, rx, ry) {
-  return { swing: -dz(lx), arm: -dz(ly), boom: -dz(ry), bucket: -dz(rx) };
+  return { swing: -dz(lx), hoist: -dz(ly), boom: -dz(ry), drag: -dz(rx) };
 }
 let gpPrevA = false, gpPrevY = false;
 function gamepadInput() {
@@ -442,7 +578,7 @@ function gamepadInput() {
   game.gamepad = null;
   return null;
 }
-// 手機遙控器
+// Phone controller
 let lanOrigin = null;
 const infoReady = fetch('/api/info').then(r => r.json()).then(j => { lanOrigin = j.lanUrl; }).catch(() => {});
 const pad = { ws: null, room: null, pads: 0, input: null, lastAt: 0, retry: 0 };
@@ -488,7 +624,7 @@ function connectPadRelay() {
 }
 function padSend(obj) { if (pad.ws && pad.ws.readyState === 1) pad.ws.send(JSON.stringify(obj)); }
 function phoneInput() {
-  // 安全機制：超過 400ms 沒收到手機訊號就當作放開搖桿
+  // Dead-man switch: no phone signal for 400 ms means the sticks are released
   if (!pad.input || performance.now() - pad.lastAt > 400) return null;
   return pad.input;
 }
@@ -508,14 +644,14 @@ function readInputs() {
   return out;
 }
 
-// ====================== 遊戲狀態 ======================
+// ====================== Game state ======================
 const game = {
-  phase: 'menu', latency: 0, t: 0, joints: { ...START_POSE }, vel: { swing: 0, boom: 0, arm: 0, bucket: 0 },
-  ideal: { ...START_POSE }, base: { x: 0, z: 0, heading: 0 }, load: 0, frameForce: 0, sampleForce: 0,
+  phase: 'menu', latency: 0, t: 0, timeLimit: 300, joints: { ...START_POSE }, vel: { swing: 0, boom: 0, hoist: 0 },
+  ideal: { ...START_POSE }, base: { x: 0, z: 0, heading: 0 }, load: 0, tension: 0, frameForce: 0, sampleForce: 0,
   inputHist: [], raw: null, delayed: null, sessionId: null, samples: [], events: [], sampleCount: 0,
-  lastSampleAt: 0, lastUploadAt: 0, demo: 0, collateral: 0, treasures: 0, treasurePts: 0,
+  lastSampleAt: 0, lastUploadAt: 0, demo: 0, cleared: 0, targets: 0, collateral: 0, strikes: 0, lastStrikeAt: 0,
   reversals: 0, lastCmdSign: {}, bigHits: 0, shake: 0, headYaw: 0, headPitch: 0, finishedOnce: false,
-  online: true, gamepad: null, lastSrc: '-',
+  online: true, gamepad: null, lastSrc: '-', prevTip: new THREE.Vector3(), hitAt: new THREE.Vector3(),
 };
 
 function setLatency(v) {
@@ -530,36 +666,40 @@ function toggleView() {
   ui.hView.textContent = thirdPerson ? 'Third person (debug)' : 'Cab';
 }
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 1800) {
   ui.toast.textContent = msg; ui.toast.style.opacity = 1;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast.style.opacity = 0; }, 1600);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast.style.opacity = 0; }, ms);
 }
 function haptic(strength, ms) {
   const gp = game.gamepad;
-  try { gp && gp.vibrationActuator && gp.vibrationActuator.playEffect('dual-rumble', { duration: ms, strongMagnitude: Math.min(1, strength), weakMagnitude: Math.min(1, strength * 0.6) }); } catch { /* 不支援 */ }
+  try { gp && gp.vibrationActuator && gp.vibrationActuator.playEffect('dual-rumble', { duration: ms, strongMagnitude: Math.min(1, strength), weakMagnitude: Math.min(1, strength * 0.6) }); } catch { /* unsupported */ }
   if (pad.pads) padSend({ t: 'haptic', ms: Math.round(ms), s: Math.min(1, strength) });
 }
 
-// ====================== 關卡建立 / 重置 ======================
+// ====================== Level setup / reset ======================
 function resetLevel() {
-  for (const h of level.houses) { scene.remove(h.mesh); h.mesh.dispose(); }
-  for (const m of level.extraMeshes) { scene.remove(m); m.geometry.dispose(); }
-  level.houses = []; level.treasures = []; level.extraMeshes = [];
+  for (const h of level.houses) for (const m of Object.values(h.meshes)) { scene.remove(m); m.dispose(); }
+  for (const m of level.extraMeshes) scene.remove(m);
+  level.houses = []; level.extraMeshes = [];
   if (world) world.free();
   initWorld();
   Object.assign(game, {
-    joints: { ...START_POSE }, vel: { swing: 0, boom: 0, arm: 0, bucket: 0 }, ideal: { ...START_POSE },
-    base: { x: 0, z: 0, heading: 0 }, load: 0, t: 0, inputHist: [], samples: [], events: [], sampleCount: 0,
-    demo: 0, collateral: 0, treasures: 0, treasurePts: 0, reversals: 0, lastCmdSign: {}, bigHits: 0, shake: 0,
+    joints: { ...START_POSE }, vel: { swing: 0, boom: 0, hoist: 0 }, ideal: { ...START_POSE },
+    base: { x: 0, z: 0, heading: 0 }, load: 0, tension: 0, t: 0, inputHist: [], samples: [], events: [], sampleCount: 0,
+    demo: 0, cleared: 0, collateral: 0, strikes: 0, reversals: 0, lastCmdSign: {}, bigHits: 0, shake: 0,
     finishedOnce: false, sessionId: null,
   });
+  generateLot();
+  const targets = level.houses.filter(h => h.kind === 'target');
+  // Start facing the first target
+  if (targets.length) game.joints.swing = game.ideal.swing = Math.atan2(targets[0].center.x, targets[0].center.z);
   applyRig();
   createMachineBodies();
-  buildHouse(TARGET, [0xb5654a, 0xa95a42, 0xbf7155, 0x9e5340, 0xc47a5c], 'target');
-  buildHouse(NEIGHBOR, [0x8fa3b8, 0x9db0c4, 0x8496aa], 'neighbor');
-  placeTreasures(3);
-  buildTruck();
-  syncDynamicMeshes();
+  game.targets = targets.length;
+  game.timeLimit = 120 + 100 * targets.length;
+  ui.lotPreview.textContent = `Today's lot: ${targets.map(h => h.name).join(' · ')} (${fmtTime(game.timeLimit)})`;
+  ui.hLot.textContent = targets.map(h => h.name).join(' · ');
+  syncDynamicMeshes(true);
   ui.resultOverlay.style.display = 'none';
   ui.finishHint.style.display = 'none';
   if (game.phase === 'result') { game.phase = 'menu'; startGame(); }
@@ -570,136 +710,253 @@ function applyRig() {
   rig.chassis.position.set(base.x, 0, base.z);
   rig.chassis.rotation.y = base.heading;
   rig.house.rotation.y = j.swing;
-  rig.boomPivot.rotation.x = j.boom;
-  rig.armPivot.rotation.x = j.arm;
-  rig.bucketPivot.rotation.x = j.bucket;
+  rig.boomPivot.rotation.x = -j.boom;
   rig.chassis.updateMatrixWorld(true);
 }
 const _v = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3();
-function bucketMinY() {
-  let m = Infinity;
-  for (const o of [rig.tip, rig.heel, rig.back, rig.mouthL]) m = Math.min(m, o.getWorldPosition(_v).y);
-  return m;
-}
+const _tip = new THREE.Vector3(), _tipVel = new THREE.Vector3(), _f = new THREE.Vector3(), _b = new THREE.Vector3(), _bv = new THREE.Vector3(), _n = new THREE.Vector3();
 
-// ====================== 每個物理步 ======================
+// ====================== One physics step ======================
 function physicsStep() {
   const playing = game.phase === 'play';
   const cmd = playing && game.delayed ? game.delayed : null;
-  const loadScale = 1 - 0.65 * game.load;
-  const prev = { ...game.joints };
-  const prevMin = bucketMinY();
 
-  for (const name of ['swing', 'boom', 'arm', 'bucket']) {
+  const prev = { swing: game.joints.swing, boom: game.joints.boom, base: { ...game.base } };
+  for (const name of JOINT_NAMES) {
     const J = JOINTS[name];
     const c = cmd ? cmd[name] : 0;
-    const target = c * J.speed * J.dir * (name === 'swing' ? 1 : loadScale);
-    const dv = target - game.vel[name];
-    game.vel[name] += clamp(dv, -JOINT_ACCEL * DT, JOINT_ACCEL * DT);
+    const scale = name === 'hoist' ? 1 - 0.5 * game.load : 1;
+    const target = c * J.speed * J.dir * scale;
+    game.vel[name] += clamp(target - game.vel[name], -J.accel * DT, J.accel * DT);
     let a = game.joints[name] + game.vel[name] * DT;
     if (a < J.min || a > J.max) { a = clamp(a, J.min, J.max); game.vel[name] = 0; }
     game.joints[name] = a;
-    // 理想軌跡：沒有延遲、沒有液壓遲滯時的關節角度（給後台比較用）
+    // Ideal path: where the joint would be with no latency and no drive lag (for the dashboard)
     const rc = playing && game.raw ? game.raw[name] : 0;
     let ia = game.ideal[name] + rc * J.speed * J.dir * DT;
     ia += (game.joints[name] - ia) * 0.5 * DT;
     game.ideal[name] = clamp(ia, J.min, J.max);
-    // 方向反轉次數（平順度）
+    // Direction reversals (smoothness)
     const s = Math.abs(c) > 0.3 ? Math.sign(c) : 0;
     if (s && game.lastCmdSign[name] && s !== game.lastCmdSign[name]) game.reversals++;
     if (s) game.lastCmdSign[name] = s;
   }
-  // 履帶
+  // Crawler tracks
   const drive = cmd ? cmd.drive : 0, turn = cmd ? cmd.turn : 0;
-  game.base.heading += turn * 0.5 * DT * (drive < 0 ? -1 : 1);
-  game.base.x += Math.sin(game.base.heading) * drive * 1.6 * DT;
-  game.base.z += Math.cos(game.base.heading) * drive * 1.6 * DT;
-  game.base.x = clamp(game.base.x, -21, 21); game.base.z = clamp(game.base.z, -12, 32);
+  game.base.heading += turn * 0.3 * DT * (drive < 0 ? -1 : 1);
+  game.base.x += Math.sin(game.base.heading) * drive * 1.2 * DT;
+  game.base.z += Math.cos(game.base.heading) * drive * 1.2 * DT;
+  game.base.x = clamp(game.base.x, -58, 58); game.base.z = clamp(game.base.z, -20, 68);
 
   applyRig();
-  // 挖斗不能鑽進地面：往下壓就停住
-  const minY = bucketMinY();
-  game.groundPress = false;
-  if (minY < 0.02 && minY < prevMin - 1e-5) {
-    for (const n of ['boom', 'arm', 'bucket']) { game.joints[n] = prev[n]; game.vel[n] = 0; }
+  // Anti-collision: the boom (or the crawler driving into an intact wall) stops instead of bulldozing the building
+  const hitPart = rigBlocked();
+  if (hitPart) {
+    const next = { swing: game.joints.swing, boom: game.joints.boom, base: { ...game.base } };
+    game.joints.swing = prev.swing; game.joints.boom = prev.boom; game.base = prev.base;
     applyRig();
-    game.groundPress = true;
+    if (rigBlocked()) { game.joints.swing = next.swing; game.joints.boom = next.boom; game.base = next.base; applyRig(); } // already touching: let the operator back out
+    else {
+      game.vel.swing = 0; game.vel.boom = 0;
+      if (playing && performance.now() - game.lastStrikeAt > 2000) {
+        game.lastStrikeAt = performance.now(); game.strikes++;
+        logEvent('boom_strike', { part: hitPart });
+        toast(hitPart === 'boom' ? '⚠️ Boom contact! Motion stopped' : '⚠️ Crawler blocked by the building'); haptic(1, 400);
+      }
+    }
   }
-
   for (const { obj, body } of machine.parts) {
     obj.matrixWorld.decompose(_p, _q, _s);
     body.setNextKinematicTranslation(_p);
     body.setNextKinematicRotation(_q);
   }
+
+  // Cable: one-sided distance constraint between boom tip and ball, solved at velocity level
+  rig.tip.getWorldPosition(_tip);
+  _tipVel.subVectors(_tip, game.prevTip).divideScalar(DT);
+  game.prevTip.copy(_tip);
+  const bb = ball.body, bt = bb.translation(), lv = bb.linvel();
+  _b.set(bt.x, bt.y, bt.z); _bv.set(lv.x, lv.y, lv.z);
+  const drag = cmd ? cmd.drag : 0;
+  if (drag > 0.02) {
+    // Drag line pulls the ball back toward the cab; let go and it swings out at the building
+    rig.fairlead.getWorldPosition(_f);
+    _n.subVectors(_f, _b); _n.y = 0;
+    if (_n.lengthSq() > 1) _bv.addScaledVector(_n.normalize(), DRAG_ACC * drag * DT);
+  } else if (drag < -0.02) {
+    // Steady: damp the sway relative to the boom tip
+    const k = Math.min(1, STEADY * -drag * DT);
+    _bv.x -= (_bv.x - _tipVel.x) * k; _bv.z -= (_bv.z - _tipVel.z) * k;
+  }
+  const L = game.joints.hoist;
+  _n.subVectors(_b, _tip); const dist = _n.length(); _n.divideScalar(dist || 1);
+  let tension = 0;
+  if (dist > L - 0.002) {
+    const rel = _bv.dot(_n) - _tipVel.dot(_n);
+    const bias = Math.min(6, Math.max(0, dist - L) * 0.35 / DT);
+    const dvn = rel + bias;
+    if (dvn > 0) { _bv.addScaledVector(_n, -dvn); tension = ball.mass * dvn / DT; }
+  }
+  bb.setLinvel(_bv, true);
+  const impactSpeed = _bv.length();
+  _vPre.copy(_bv);
+
   world.step(eventQueue);
 
-  let maxF = 0;
+  let hitF = 0;
   eventQueue.drainContactForceEvents(ev => {
     const a = colliderTag.get(ev.collider1()), b = colliderTag.get(ev.collider2());
-    if (a === 'machine' || b === 'machine') maxF = Math.max(maxF, ev.totalForceMagnitude());
+    if (a !== 'ball' && b !== 'ball') return;
+    const other = a === 'ball' ? b : a;
+    if (other === 'target' || other === 'neighbor') hitF = Math.max(hitF, ev.totalForceMagnitude());
   });
   eventQueue.drainCollisionEvents(() => {});
-  game.frameForce = Math.max(game.frameForce, maxF);
-  game.sampleForce = Math.max(game.sampleForce, maxF);
-  const loadTarget = clamp(maxF / 120000 + (game.groundPress ? 0.35 : 0), 0, 1);
-  game.load += (loadTarget - game.load) * (loadTarget > game.load ? 0.25 : 0.04);
+  if (hitF > 3e5 && impactSpeed > BREAK_SPEED) breakAround(impactSpeed);
+  game.frameForce = Math.max(game.frameForce, hitF);
+  game.sampleForce = Math.max(game.sampleForce, hitF);
+  game.tension += (tension - game.tension) * 0.2;
+  game.load = clamp(game.tension / (ball.mass * G) / 4, 0, 1);
 }
 
-function syncDynamicMeshes() {
-  const m4 = new THREE.Matrix4(), sc = new THREE.Vector3();
+// Structural damage: rigid panels don't shatter, so a hard hit punches the nearest pieces out along the ball's path.
+// Whatever they were holding up then falls under real physics.
+const _vPre = new THREE.Vector3(), _dir = new THREE.Vector3(), _pp = new THREE.Vector3();
+let breakShape = null, lastBreakT = -1;
+function breakAround(speed) {
+  if (game.t - lastBreakT < 0.15) return;
+  lastBreakT = game.t;
+  breakShape ||= new RAPIER.Ball(BALL_R + BREAK_RADIUS);
+  const bt = ball.body.translation();
+  _dir.copy(_vPre).normalize();
+  const hits = [];
+  world.intersectionsWithShape(bt, { x: 0, y: 0, z: 0, w: 1 }, breakShape, c => {
+    const piece = pieceByCollider.get(c.handle);
+    if (piece) hits.push(piece);
+    return hits.length < 16;
+  });
+  const power = Math.min(9, 1.5 + speed * 1.3);
+  for (const piece of hits) {
+    const t = piece.body.translation();
+    _pp.set(t.x - bt.x, t.y - bt.y, t.z - bt.z);
+    const falloff = 1 - Math.min(1, Math.max(0, _pp.length() - BALL_R) / (BREAK_RADIUS + 1));
+    _pp.normalize().multiplyScalar(0.4).add(_dir).normalize();
+    const m = piece.body.mass();
+    if (!piece.broken && falloff > 0.15) crack(piece);
+    piece.body.wakeUp();
+    piece.body.applyImpulse({ x: _pp.x * m * power * falloff, y: _pp.y * m * power * falloff * 0.5, z: _pp.z * m * power * falloff }, true);
+    piece.body.applyTorqueImpulse({ x: (Math.random() - 0.5) * m * 2, y: (Math.random() - 0.5) * m * 2, z: (Math.random() - 0.5) * m * 2 }, true);
+  }
+  if (hits.length) emitDust(_v.set(bt.x, bt.y, bt.z), 10 + hits.length * 4, 3);
+}
+
+// A cracked piece shrinks a little and loses its grip, so it no longer carries the floors above it
+function crack(piece) {
+  piece.broken = true;
+  piece.size = piece.size.map(v => v * 0.82);
+  piece.collider.setHalfExtents({ x: piece.size[0] / 2, y: piece.size[1] / 2, z: piece.size[2] / 2 });
+  piece.collider.setFriction(0.25);
+  piece.mesh.setColorAt(piece.idx, _crackCol.setHex(piece.color).multiplyScalar(0.7));
+  piece.mesh.instanceColor.needsUpdate = true;
+}
+const _crackCol = new THREE.Color();
+
+const _qp = new THREE.Vector3(), _qq = new THREE.Quaternion();
+function rigBlocked() {
+  for (const part of machine.parts) {
+    part.obj.matrixWorld.decompose(_p, _qq, _s);
+    for (const { shape, off } of part.shapes) {
+      _qp.copy(off).applyQuaternion(_qq).add(_p);
+      let found = false;
+      world.intersectionsWithShape(_qp, _qq, shape, c => {
+        const piece = pieceByCollider.get(c.handle);
+        if (!piece) return true;
+        if (part.tag === 'machine' && piece.moved) return true;  // the crawler may shove loose rubble
+        found = true; return false;
+      });
+      if (found) return part.tag;
+    }
+  }
+  return null;
+}
+
+const _m4 = new THREE.Matrix4(), _sc = new THREE.Vector3();
+function syncDynamicMeshes(force = false) {
   for (const h of level.houses) {
-    h.bricks.forEach((b, i) => {
-      const t = b.body.translation(), r = b.body.rotation();
-      _p.set(t.x, t.y, t.z); _q.set(r.x, r.y, r.z, r.w); sc.set(...b.size);
-      h.mesh.setMatrixAt(i, m4.compose(_p, _q, sc));
-    });
-    h.mesh.instanceMatrix.needsUpdate = true;
+    const dirty = new Set();
+    for (const p of h.pieces) {
+      if (!force && p.body.isSleeping()) continue;
+      const t = p.body.translation(), r = p.body.rotation();
+      _p.set(t.x, t.y, t.z); _q.set(r.x, r.y, r.z, r.w); _sc.set(...p.size);
+      p.mesh.setMatrixAt(p.idx, _m4.compose(_p, _q, _sc));
+      dirty.add(p.mesh);
+    }
+    for (const m of dirty) m.instanceMatrix.needsUpdate = true;
   }
-  for (const tr of level.treasures) {
-    const t = tr.body.translation(), r = tr.body.rotation();
-    tr.mesh.position.set(t.x, t.y, t.z); tr.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+  const t = ball.body.translation(), r = ball.body.rotation();
+  ballMesh.position.set(t.x, t.y, t.z); ballMesh.quaternion.set(r.x, r.y, r.z, r.w);
+}
+function updateRopes() {
+  rig.tip.getWorldPosition(_tip);
+  _n.subVectors(_tip, ballMesh.position).normalize();
+  _v.copy(ballMesh.position).addScaledVector(_n, BALL_R + 0.12);
+  shackle.position.copy(_v); shackle.quaternion.setFromUnitVectors(_up, _n);
+  stretchRope(ropes.hoist, _tip, _v);
+  const dragging = game.phase === 'play' && game.delayed && game.delayed.drag > 0.02;
+  ropes.drag.visible = dragging;
+  if (dragging) { rig.fairlead.getWorldPosition(_f); stretchRope(ropes.drag, _f, ballMesh.position); }
+  rig.gantryTop.getWorldPosition(_f);
+  for (const [m, x] of [[ropes.pendL, 0.5], [ropes.pendR, -0.5]]) {
+    rig.pendant.position.x = x; rig.pendant.getWorldPosition(_v);
+    stretchRope(m, _f, _v);
   }
 }
 
-// ====================== 任務判定 ======================
+// ====================== Mission scoring ======================
 let lastJudge = 0;
 function judge(now) {
   if (now - lastJudge < 200) return; lastJudge = now;
+  let sum = 0, cleared = 0, puffs = 0;
   for (const h of level.houses) {
     let n = 0;
-    for (const b of h.bricks) {
-      const t = b.body.translation();
-      _v.set(t.x, t.y, t.z);
-      if (_v.distanceTo(b.origin) > (h.kind === 'target' ? 0.5 : 0.25)) n++;
+    for (const p of h.pieces) {
+      if (!p.moved && !p.body.isSleeping()) {
+        const t = p.body.translation();
+        _v.set(t.x, t.y, t.z);
+        if (_v.distanceTo(p.origin) > (h.kind === 'target' ? 1.0 : 0.4)) {
+          p.moved = true;
+          if (puffs < 12 && Math.random() < 0.5) { emitDust(_v, 3, 2); puffs++; }
+        }
+      }
+      if (p.moved) n++;
     }
+    h.ratio = n / h.pieces.length;
     if (h.kind === 'target') {
-      const prevPct = Math.floor(game.demo * 10);
-      game.demo = n / h.bricks.length;
-      const pct = Math.floor(game.demo * 10);
-      if (game.phase === 'play' && pct > prevPct) logEvent('demolition', { ratio: +game.demo.toFixed(3) });
+      sum += h.ratio;
+      if (!h.cleared && h.ratio >= CLEAR_RATIO) {
+        h.cleared = true;
+        if (game.phase === 'play') { logEvent('building_cleared', { name: h.name, t: r3(game.t) }); toast(`🏚️ ${h.name} is down!`, 2400); haptic(0.8, 300); }
+      }
+      if (h.cleared) cleared++;
     } else if (n > game.collateral) {
       if (game.phase === 'play') {
         logEvent('collateral', { count: n });
-        toast('⚠️ You hit the neighbor\'s house!'); haptic(1, 300);
+        toast('⚠️ You hit the heritage house!'); haptic(1, 300);
       }
       game.collateral = n;
     }
   }
-  for (const tr of level.treasures) {
-    if (tr.delivered) continue;
-    const t = tr.body.translation(), lv = tr.body.linvel();
-    if (inTruck(t) && Math.hypot(lv.x, lv.y, lv.z) < 0.6) {
-      tr.delivered = true; game.treasures++; game.treasurePts += tr.pts;
-      if (game.phase === 'play') { logEvent('treasure', { name: tr.name, pts: tr.pts }); toast(`💰 ${tr.name} secured +${tr.pts}`); haptic(0.6, 200); }
-    }
-  }
+  const prevPct = Math.floor(game.demo * 10);
+  game.demo = game.targets ? sum / game.targets : 0;
+  game.cleared = cleared;
+  if (game.phase === 'play' && Math.floor(game.demo * 10) > prevPct) logEvent('demolition', { ratio: +game.demo.toFixed(3) });
   if (game.phase === 'play') {
-    ui.finishHint.style.display = game.demo >= FINISH_RATIO ? 'block' : 'none';
-    if (game.demo >= FINISH_RATIO && !game.finishedOnce) { game.finishedOnce = true; toast('Target reached! You can finish the job'); logEvent('target_reached', {}); }
+    const done = cleared >= game.targets;
+    ui.finishHint.style.display = done ? 'block' : 'none';
+    if (done && !game.finishedOnce) { game.finishedOnce = true; toast('All targets down! You can finish the job', 2400); logEvent('target_reached', {}); }
   }
 }
 
-// ====================== 遙測 ======================
+// ====================== Telemetry ======================
 const r3 = v => Math.round(v * 1000) / 1000;
 function logEvent(type, data) {
   const e = { t: r3(game.t), type, ...data };
@@ -708,16 +965,18 @@ function logEvent(type, data) {
 function takeSample() {
   const j = game.joints, id = game.ideal, raw = game.raw, d = game.delayed;
   rig.tip.getWorldPosition(_v);
+  const bt = ball.body.translation(), bv = ball.body.linvel();
   game.samples.push({
     t: r3(game.t), src: raw.src,
-    inSwing: r3(raw.swing), inArm: r3(raw.arm), inBoom: r3(raw.boom), inBucket: r3(raw.bucket),
+    inSwing: r3(raw.swing), inBoom: r3(raw.boom), inHoist: r3(raw.hoist), inDrag: r3(raw.drag),
     inTrackL: r3(clamp(raw.drive - raw.turn, -1, 1)), inTrackR: r3(clamp(raw.drive + raw.turn, -1, 1)),
-    dSwing: r3(d.swing), dArm: r3(d.arm), dBoom: r3(d.boom), dBucket: r3(d.bucket),
-    swing: r3(j.swing * DEG), boom: r3(-j.boom * DEG), arm: r3(j.arm * DEG), bucket: r3(j.bucket * DEG),
-    tgtSwing: r3(id.swing * DEG), tgtBoom: r3(-id.boom * DEG), tgtArm: r3(id.arm * DEG), tgtBucket: r3(id.bucket * DEG),
+    dSwing: r3(d.swing), dBoom: r3(d.boom), dHoist: r3(d.hoist), dDrag: r3(d.drag),
+    swing: r3(j.swing * DEG), boom: r3(j.boom * DEG), hoist: r3(j.hoist),
+    tgtSwing: r3(id.swing * DEG), tgtBoom: r3(id.boom * DEG), tgtHoist: r3(id.hoist),
     tipX: r3(_v.x), tipY: r3(_v.y), tipZ: r3(_v.z),
+    ballX: r3(bt.x), ballY: r3(bt.y), ballZ: r3(bt.z), ballVX: r3(bv.x), ballVY: r3(bv.y), ballVZ: r3(bv.z),
     baseX: r3(game.base.x), baseZ: r3(game.base.z), heading: r3(game.base.heading * DEG),
-    load: r3(game.load), impulse: r3(game.sampleForce / 1000), latencyMs: game.latency,
+    tensionKN: r3(game.tension / 1000), load: r3(game.load), impulse: r3(game.sampleForce / 1000), latencyMs: game.latency,
   });
   game.sampleForce = 0;
   game.sampleCount++;
@@ -746,7 +1005,7 @@ function setOnline(on) {
   ui.hRec.textContent = on ? 'REC Telemetry recording' : 'REC Offline, buffering';
 }
 
-// ====================== 流程 ======================
+// ====================== Flow ======================
 async function startGame() {
   if (game.phase !== 'menu') return;
   initAudio();
@@ -758,7 +1017,10 @@ async function startGame() {
   ui.hud.forEach(h => { h.style.display = ''; });
   game.phase = 'play'; game.t = 0;
   padSend({ t: 'state', phase: 'play' });
-  logEvent('start', { player, latencyMs: game.latency, treasures: level.treasures.map(t => t.name) });
+  const names = level.houses.filter(h => h.kind === 'target').map(h => h.name);
+  toast(`Demolish: ${names.join(' + ')}`, 3000);
+  logEvent('start', { player, latencyMs: game.latency, machine: 'wrecking-ball crane', buildings: names,
+    lot: level.houses.map(h => ({ name: h.name, kind: h.kind, x: r3(h.center.x), z: r3(h.center.z), r: r3(h.r), pieces: h.pieces.length })) });
   try {
     const { id } = await api('/api/session/start', { player, latencyMs: game.latency });
     game.sessionId = id; setOnline(true);
@@ -766,7 +1028,7 @@ async function startGame() {
 }
 function tryFinish() {
   if (game.phase !== 'play') return;
-  if (game.demo < FINISH_RATIO) { toast(`Demolition must reach ${FINISH_RATIO * 100}%`); return; }
+  if (game.cleared < game.targets) { toast(`Bring down every building first (${game.cleared}/${game.targets})`); return; }
   endGame(true, 'finished');
 }
 async function endGame(completed, reason) {
@@ -775,18 +1037,18 @@ async function endGame(completed, reason) {
   ui.finishHint.style.display = 'none';
   const minutes = Math.max(game.t / 60, 0.25);
   const smooth = Math.round(clamp(100 - (game.reversals / minutes) * 2.5, 0, 100));
-  const stars = completed ? 1 + (game.collateral === 0 ? 1 : 0) + (smooth >= 60 ? 1 : 0) : 0;
-  const timeBonus = completed ? Math.round(Math.max(0, TIME_LIMIT - game.t) * 3) : 0;
-  const score = Math.max(0, Math.round(game.demo * 1000) + game.treasurePts + timeBonus - game.collateral * 40 + smooth * 2);
+  const stars = completed ? 1 + (game.collateral === 0 && game.strikes === 0 ? 1 : 0) + (smooth >= 60 ? 1 : 0) : 0;
+  const timeBonus = completed ? Math.round(Math.max(0, game.timeLimit - game.t) * 3) : 0;
+  const score = Math.max(0, Math.round(game.demo * 1000) + game.cleared * 400 + timeBonus - game.collateral * 40 - game.strikes * 150 + smooth * 2);
   const result = { completed, score, stars, time: r3(game.t), demolished: r3(game.demo), collateral: game.collateral,
-    treasures: game.treasures, smoothness: smooth, reason };
+    treasures: game.cleared, buildings: game.targets, boomStrikes: game.strikes, smoothness: smooth, reason };
   logEvent('finish', result);
   padSend({ t: 'state', phase: 'result', score, stars });
   ui.rTitle.textContent = completed ? 'Job done!' : (reason === 'timeout' ? 'Time\'s up: project overdue' : 'Job aborted');
   ui.rStars.innerHTML = [0, 1, 2].map(i => `<span class="${i < stars ? '' : 'off'}">★</span>`).join('');
   const row = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
-  ui.rTable.innerHTML = row('Demolished', Math.round(game.demo * 100) + '%') + row('Time', fmtTime(game.t))
-    + row('Treasures', `${game.treasures} (+${game.treasurePts})`) + row('Collateral damage', game.collateral + ' bricks')
+  ui.rTable.innerHTML = row('Buildings down', `${game.cleared} / ${game.targets}`) + row('Demolished', Math.round(game.demo * 100) + '%')
+    + row('Time', fmtTime(game.t)) + row('Collateral damage', game.collateral + ' pieces') + row('Boom strikes', game.strikes)
     + row('Smoothness', smooth + ' / 100') + row('Network latency', game.latency + ' ms')
     + row('Telemetry samples', game.sampleCount.toLocaleString()) + row('<b>Score</b>', `<b>${score.toLocaleString()}</b>`);
   ui.rRank.textContent = 'Uploading score…';
@@ -802,24 +1064,24 @@ ui.startBtn.addEventListener('click', startGame);
 ui.againBtn.addEventListener('click', resetLevel);
 const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-// 轉頭：按住右鍵拖曳
+// Look around: hold right mouse button and drag
 let looking = false;
 renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
 renderer.domElement.addEventListener('mousedown', e => { if (e.button === 2) looking = true; });
 addEventListener('mouseup', e => { if (e.button === 2) looking = false; });
 addEventListener('mousemove', e => {
   if (!looking) return;
-  game.headYaw = clamp(game.headYaw - e.movementX * 0.004, -1.6, 1.6);
-  game.headPitch = clamp(game.headPitch - e.movementY * 0.004, -0.7, 0.5);
+  game.headYaw = clamp(game.headYaw - e.movementX * 0.004, -1.7, 1.7);
+  game.headPitch = clamp(game.headPitch - e.movementY * 0.004, -0.6, 0.9);
 });
 
-// ====================== 主迴圈 ======================
+// ====================== Main loop ======================
 let acc = 0, last = performance.now(), hudAt = 0, padStateAt = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
 
-  // 輸入 → 延遲佇列
+  // Input → latency queue
   const raw = readInputs();
   game.raw = raw;
   game.inputHist.push({ at: now, v: raw });
@@ -836,36 +1098,37 @@ function frame(now) {
   while (acc >= DT && steps < 4) { physicsStep(); acc -= DT; steps++; if (game.phase === 'play') game.t += DT; }
   if (steps === 4) acc = 0;
   syncDynamicMeshes();
+  updateRopes();
   judge(now);
 
-  // 打擊感：鏡頭震動、粉塵、聲音、震動回饋
-  const hit = clamp(game.frameForce / 90000, 0, 1);
-  if (hit > 0.05) {
-    game.shake = Math.max(game.shake, hit * 0.12);
-    rig.tip.getWorldPosition(_v); emitDust(_v, Math.ceil(hit * 14));
-    audioHit(hit, 500 + hit * 900);
-    if (hit > 0.35) haptic(hit, 90);
-    if (hit > 0.6 && game.phase === 'play') { game.bigHits++; logEvent('impact', { kN: r3(game.frameForce / 1000) }); }
+  // Impact feel: camera shake, dust, sound, rumble
+  const hit = clamp((game.frameForce - 5e5) / 2e6, 0, 1);
+  if (hit > 0.03) {
+    game.shake = Math.max(game.shake, hit * 0.1);
+    emitDust(ballMesh.position, Math.ceil(hit * 30), 2.5);
+    audioHit(0.3 + hit * 0.7, 250 + hit * 700);
+    if (hit > 0.2) haptic(hit, 120);
+    if (hit > 0.4 && game.phase === 'play') { game.bigHits++; logEvent('impact', { kN: r3(game.frameForce / 1000) }); }
   }
   game.shake *= Math.pow(0.02, dt);
   updateDust(dt);
-  const activity = Math.min(1, ['swing', 'boom', 'arm', 'bucket'].reduce((s, n) => s + Math.abs(game.vel[n]), 0) / 1.2);
+  const activity = Math.min(1, JOINT_NAMES.reduce((s, n) => s + Math.abs(game.vel[n]) / JOINTS[n].speed, 0) / 1.5);
   audioUpdate(activity, game.load);
 
-  // 鏡頭
-  fpCam.rotation.set(-0.2 + game.headPitch, game.headYaw, 0);
+  // Cameras
+  fpCam.rotation.set(0.22 + game.headPitch, game.headYaw, 0);
   fpCam.position.set((Math.random() - .5) * game.shake, (Math.random() - .5) * game.shake, 0);
   if (thirdPerson) {
     rig.house.updateWorldMatrix(true, false);
-    tpCam.position.copy(_v.set(5, 7, -9).applyMatrix4(rig.house.matrixWorld));
-    tpCam.lookAt(_v.set(0, 1.5, 6).applyMatrix4(rig.house.matrixWorld));
+    tpCam.position.copy(_v.set(14, 18, -22).applyMatrix4(rig.house.matrixWorld));
+    tpCam.lookAt(_v.set(0, 10, 22).applyMatrix4(rig.house.matrixWorld));
   }
 
-  // 遙測
+  // Telemetry
   if (game.phase === 'play') {
     if (now - game.lastSampleAt >= SAMPLE_MS) { game.lastSampleAt = now; takeSample(); }
     if (now - game.lastUploadAt >= UPLOAD_MS) { game.lastUploadAt = now; upload(); }
-    if (game.t >= TIME_LIMIT) endGame(game.demo >= FINISH_RATIO, 'timeout');
+    if (game.t >= game.timeLimit) endGame(game.cleared >= game.targets, 'timeout');
   }
   if (now - padStateAt > 500 && pad.pads) {
     padStateAt = now;
@@ -877,29 +1140,31 @@ function frame(now) {
 }
 function updateHud() {
   if (game.phase === 'menu') return;
-  const remain = Math.max(0, TIME_LIMIT - game.t);
+  const remain = Math.max(0, game.timeLimit - game.t);
   ui.hTime.textContent = fmtTime(remain);
   ui.hTime.style.color = remain < 30 ? 'var(--red)' : '';
   ui.hDemo.textContent = Math.round(game.demo * 100) + '%';
-  ui.demoBar.style.width = Math.min(100, game.demo / FINISH_RATIO * 100) + '%';
-  ui.hTreasure.textContent = `${game.treasures} / ${level.treasures.length}`;
+  ui.demoBar.style.width = Math.min(100, game.demo / CLEAR_RATIO * 100) + '%';
+  ui.hCleared.textContent = `${game.cleared} / ${game.targets}`;
   ui.hCollateral.textContent = game.collateral;
   ui.hCollateral.style.color = game.collateral ? 'var(--red)' : '';
+  ui.hStrikes.textContent = game.strikes;
+  ui.hStrikes.style.color = game.strikes ? 'var(--red)' : '';
   ui.hSamples.textContent = game.sampleCount.toLocaleString();
   const srcName = { kbd: 'Keyboard', gamepad: 'Gamepad', phone: '📱 Phone' };
   ui.hPad.textContent = pad.pads ? '📱 Phone connected' : (game.gamepad ? 'Gamepad' : 'Keyboard');
   if (game.lastSrc !== '-' && !pad.pads) ui.hPad.textContent = game.lastSrc.split('+').map(s => srcName[s] || s).join(' + ');
-  const j = game.joints;
+  const j = game.joints, bv = ball.body.linvel();
   ui.gSwing.textContent = Math.round(((j.swing * DEG) % 360 + 540) % 360 - 180) + '°';
-  ui.gBoom.textContent = Math.round(-j.boom * DEG) + '°';
-  ui.gArm.textContent = Math.round(j.arm * DEG) + '°';
-  ui.gBucket.textContent = Math.round(j.bucket * DEG) + '°';
+  ui.gBoom.textContent = Math.round(j.boom * DEG) + '°';
+  ui.gHoist.textContent = j.hoist.toFixed(1) + ' m';
+  ui.gBall.textContent = Math.hypot(bv.x, bv.y, bv.z).toFixed(1) + ' m/s';
   ui.loadBar.style.width = Math.round(game.load * 100) + '%';
 }
 
-// ====================== 啟動 ======================
+// ====================== Boot ======================
 resetLevel();
 setLatency(+ui.latency.value || 0);
 infoReady.finally(connectPadRelay);
 requestAnimationFrame(frame);
-window.__game = { game, level, rig, pad, keys, startGame, endGame, resetLevel, setLatency, TARGET };
+window.__game = { game, level, rig, pad, keys, ball, startGame, endGame, resetLevel, setLatency, TEMPLATES, physicsStep, judge, syncDynamicMeshes };

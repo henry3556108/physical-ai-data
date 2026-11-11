@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0d0f12">
-<title>Excavator Controller</title>
+<title>Crane Controller</title>
 <style>
   :root { --yellow:#f5b800; --bg:#0d0f12; --panel:#161a20; --line:#2a3038; --text:#e9edf2; --muted:#8d97a5; --red:#ff4d4d; --green:#3ddc84; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; }
@@ -41,7 +41,7 @@
 </head>
 <body>
 <div id="join">
-  <div style="font-size:26px;font-weight:800">🚜 Excavator <span style="color:var(--yellow)">Controller</span></div>
+  <div style="font-size:26px;font-weight:800">🏗️ Crane <span style="color:var(--yellow)">Controller</span></div>
   <div class="muted">Enter the 4-digit room code shown on the game screen</div>
   <input id="roomIn" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
   <button class="btn" id="joinBtn">Connect</button>
@@ -54,7 +54,7 @@
   <div class="top"><span><span class="dot" id="dot"></span><span id="conn">Connecting</span></span><span id="lat"></span></div>
   <div class="stick" id="stickL">
     <span class="stickName">Left stick</span>
-    <div class="ring"><div class="knob"></div><span class="lbl t">Arm out</span><span class="lbl b">Arm in</span><span class="lbl l">Swing L</span><span class="lbl r">Swing R</span></div>
+    <div class="ring"><div class="knob"></div><span class="lbl t">Lower</span><span class="lbl b">Hoist</span><span class="lbl l">Swing L</span><span class="lbl r">Swing R</span></div>
   </div>
   <div class="mid">
     <div id="stat">—</div>
@@ -68,7 +68,7 @@
   </div>
   <div class="stick" id="stickR">
     <span class="stickName">Right stick</span>
-    <div class="ring"><div class="knob"></div><span class="lbl t">Boom down</span><span class="lbl b">Boom up</span><span class="lbl l">Curl</span><span class="lbl r">Dump</span></div>
+    <div class="ring"><div class="knob"></div><span class="lbl t">Boom down</span><span class="lbl b">Boom up</span><span class="lbl l">Drag in</span><span class="lbl r">Steady</span></div>
   </div>
 </div>
 
