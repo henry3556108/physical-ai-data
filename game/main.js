@@ -60,7 +60,7 @@ const ui = {
   loadBar: $('loadBar').firstElementChild, toast: $('toast'), finishHint: $('finishHint'),
   rTitle: $('rTitle'), rStars: $('rStars'), rTable: $('rTable'), rRank: $('rRank'),
   pairQr: $('pairQr'), pairUrl: $('pairUrl'), pairRoom: $('pairRoom'), pairStatus: $('pairStatus'),
-  lotPreview: $('lotPreview'),
+  lotPreview: $('lotPreview'), dragTag: $('dragTag'),
 };
 const store = {
   get(k, d) { try { const v = localStorage.getItem('exc.' + k); return v == null ? d : v; } catch { return d; } },
@@ -290,7 +290,8 @@ rig.pendant = new THREE.Object3D(); rig.pendant.position.set(0, 0.7, BOOM_L - 0.
 // Ropes are cylinders re-stretched every frame between two world points
 const ropeMat = mat(0x1c1d1f, { metalness: 0.6, roughness: 0.45 });
 function rope(r) { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 6, 1), ropeMat); m.castShadow = true; m.frustumCulled = false; scene.add(m); return m; }
-const ropes = { hoist: rope(0.045), drag: rope(0.04), pendL: rope(0.05), pendR: rope(0.05) };
+const ropes = { hoist: rope(0.045), drag: rope(0.035), pendL: rope(0.05), pendR: rope(0.05) };
+ropes.drag.material = mat(0xf5b800, { roughness: 0.6 });
 const _up = new THREE.Vector3(0, 1, 0), _rd = new THREE.Vector3();
 function stretchRope(m, a, b) {
   _rd.subVectors(b, a); const len = _rd.length();
@@ -306,7 +307,14 @@ const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.06, 8, 16), steel)
 shackle.castShadow = true; scene.add(shackle);
 
 const machine = { parts: [] }; // { obj, body }
-const ball = { body: null, mass: 0 };
+const ball = { body: null, mass: 0, tipBody: null, joint: null, jointL: -1 };
+function ensureRope(L) {
+  if (ball.joint && Math.abs(L - ball.jointL) < 0.005) return;
+  if (ball.joint) world.removeImpulseJoint(ball.joint, true);
+  const a = rig.tip.position;
+  ball.joint = world.createImpulseJoint(RAPIER.JointData.rope(L, { x: a.x, y: a.y, z: a.z }, { x: 0, y: 0, z: 0 }), ball.tipBody, ball.body, true);
+  ball.jointL = L;
+}
 function createMachineBodies() {
   machine.parts = [];
   const mk = (obj, shapes, tag, physical = true) => {
@@ -329,11 +337,14 @@ function createMachineBodies() {
   // The ball: a heavy dynamic sphere hanging on a one-sided cable constraint (see physicsStep)
   rig.tip.getWorldPosition(_v);
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(_v.x, _v.y - game.joints.hoist, _v.z)
-    .setCcdEnabled(true).setCanSleep(false).setLinearDamping(0.02).setAngularDamping(1.5));
+    .setCcdEnabled(true).setCanSleep(false).setLinearDamping(0.04).setAngularDamping(1.5));
   const c = world.createCollider(RAPIER.ColliderDesc.ball(BALL_R).setDensity(BALL_DENSITY).setFriction(0.6).setRestitution(0.1)
     .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS).setContactForceEventThreshold(20000), body);
   colliderTag.set(c.handle, 'ball');
   ball.body = body; ball.mass = body.mass();
+  ball.tipBody = machine.parts.find(p => p.obj === rig.boomPivot).body;
+  ball.joint = null; ball.jointL = -1;
+  ensureRope(game.joints.hoist);
   game.prevTip.copy(_v);
 }
 
@@ -563,7 +574,9 @@ function keyboardInput() {
 const dz = v => Math.abs(v) < 0.12 ? 0 : (v - Math.sign(v) * 0.12) / 0.88;
 // Raw stick values (right/down positive) → crane commands
 function sticksToAxes(lx, ly, rx, ry) {
-  return { swing: -dz(lx), hoist: -dz(ly), boom: -dz(ry), drag: -dz(rx) };
+  // Drag line / steady only when the right stick is pushed clearly sideways, so boom moves don't leak into it
+  const dragOn = Math.abs(rx) > 0.35 && Math.abs(rx) > Math.abs(ry) * 1.2;
+  return { swing: -dz(lx), hoist: -dz(ly), boom: -dz(ry), drag: dragOn ? -Math.sign(rx) * (Math.abs(rx) - 0.35) / 0.65 : 0 };
 }
 let gpPrevA = false, gpPrevY = false;
 function gamepadInput() {
@@ -793,21 +806,25 @@ function physicsStep() {
     const k = Math.min(1, STEADY * -drag * DT);
     _bv.x -= (_bv.x - _tipVel.x) * k; _bv.z -= (_bv.z - _tipVel.z) * k;
   }
-  const L = game.joints.hoist;
-  _n.subVectors(_b, _tip); const dist = _n.length(); _n.divideScalar(dist || 1);
-  let tension = 0;
-  if (dist > L - 0.002) {
-    const rel = _bv.dot(_n) - _tipVel.dot(_n);
-    const bias = Math.min(6, Math.max(0, dist - L) * 0.35 / DT);
-    const dvn = rel + bias;
-    if (dvn > 0) { _bv.addScaledVector(_n, -dvn); tension = ball.mass * dvn / DT; }
-  }
+  // The cable itself is a Rapier rope joint (max distance = cable length), solved together with the contacts
+  ensureRope(game.joints.hoist);
   bb.setLinvel(_bv, true);
   const impactSpeed = _bv.length();
   _vPre.copy(_bv);
 
   world.step(eventQueue);
 
+  // Cable tension estimate from the pendulum state (0 when the cable is slack)
+  let tension = 0;
+  {
+    const q = bb.translation(), w = bb.linvel();
+    _n.set(q.x - _tip.x, q.y - _tip.y, q.z - _tip.z); const dist = _n.length(); _n.divideScalar(dist || 1);
+    if (dist > game.joints.hoist - 0.03) {
+      _v.set(w.x - _tipVel.x, w.y - _tipVel.y, w.z - _tipVel.z);
+      const vr = _v.dot(_n), vt2 = Math.max(0, _v.lengthSq() - vr * vr);
+      tension = Math.max(0, ball.mass * (vt2 / Math.max(dist, 1) + G * -_n.y));
+    }
+  }
   let hitF = 0;
   eventQueue.drainContactForceEvents(ev => {
     const a = colliderTag.get(ev.collider1()), b = colliderTag.get(ev.collider2());
@@ -908,7 +925,12 @@ function updateRopes() {
   stretchRope(ropes.hoist, _tip, _v);
   const dragging = game.phase === 'play' && game.delayed && game.delayed.drag > 0.02;
   ropes.drag.visible = dragging;
-  if (dragging) { rig.fairlead.getWorldPosition(_f); stretchRope(ropes.drag, _f, ballMesh.position); }
+  if (dragging) {
+    rig.fairlead.getWorldPosition(_f);
+    _p.subVectors(_f, ballMesh.position).normalize().multiplyScalar(BALL_R).add(ballMesh.position);
+    stretchRope(ropes.drag, _f, _p);
+  }
+  ui.dragTag.style.display = dragging ? '' : 'none';
   rig.gantryTop.getWorldPosition(_f);
   for (const [m, x] of [[ropes.pendL, 0.5], [ropes.pendR, -0.5]]) {
     rig.pendant.position.x = x; rig.pendant.getWorldPosition(_v);
