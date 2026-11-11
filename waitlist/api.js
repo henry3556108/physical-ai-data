@@ -56,32 +56,32 @@ function clientIp(req) {
 // ---------- 驗證 ----------
 function validateBirthday(v) {
   const m = DATE_RE.exec(v);
-  if (!m) return '生日格式不正確，請用 YYYY-MM-DD';
+  if (!m) return 'Date of birth must be in YYYY-MM-DD format';
   const y = +m[1], mo = +m[2], d = +m[3];
   const dt = new Date(Date.UTC(y, mo - 1, d));
-  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return '生日不是有效的日期';
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return 'Date of birth is not a valid date';
   // 以台灣時間（UTC+8）的「今天」為準
   const tw = new Date(Date.now() + 8 * 3600_000);
   const ty = tw.getUTCFullYear(), tm = tw.getUTCMonth() + 1, td = tw.getUTCDate();
   const todayKey = ty * 10000 + tm * 100 + td, bKey = y * 10000 + mo * 100 + d;
-  if (bKey > todayKey) return '生日不能是未來的日期';
+  if (bKey > todayKey) return 'Date of birth cannot be in the future';
   let age = ty - y;
   if (tm * 100 + td < mo * 100 + d) age--;
-  if (age < 0 || age > 120) return '生日超出合理範圍（0–120 歲）';
+  if (age < 0 || age > 120) return 'Date of birth is out of range (age 0–120)';
   return null;
 }
 
 function validate(body) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: '資料格式錯誤' };
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'Invalid request data' };
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const birthday = typeof body.birthday === 'string' ? body.birthday.trim() : '';
-  if (!email) return { error: '請填寫 Email' };
-  if (email.length > 254 || !EMAIL_RE.test(email)) return { error: 'Email 格式不正確' };
-  if (!name) return { error: '請填寫姓名' };
-  if ([...name].length > 40) return { error: '姓名最多 40 個字' };
-  if (/[\u0000-\u001f\u007f]/.test(name)) return { error: '姓名含有不允許的字元' };
-  if (!birthday) return { error: '請填寫生日' };
+  if (!email) return { error: 'Please enter your email' };
+  if (email.length > 254 || !EMAIL_RE.test(email)) return { error: 'Please enter a valid email address' };
+  if (!name) return { error: 'Please enter your name' };
+  if ([...name].length > 40) return { error: 'Name must be 40 characters or fewer' };
+  if (/[\u0000-\u001f\u007f]/.test(name)) return { error: 'Name contains invalid characters' };
+  if (!birthday) return { error: 'Please enter your date of birth' };
   const bErr = validateBirthday(birthday);
   if (bErr) return { error: bErr };
   return { email, name, birthday };
@@ -90,7 +90,7 @@ function validate(body) {
 // ---------- 管理驗證 ----------
 function checkAdmin(req, url) {
   const expected = process.env.WAITLIST_ADMIN_TOKEN;
-  if (!expected) return { code: 503, error: '管理功能未啟用（未設定 WAITLIST_ADMIN_TOKEN）' };
+  if (!expected) return { code: 503, error: 'Admin access is disabled (WAITLIST_ADMIN_TOKEN is not set)' };
   let given = '';
   const auth = req.headers.authorization;
   if (typeof auth === 'string' && /^Bearer\s+/i.test(auth)) given = auth.replace(/^Bearer\s+/i, '').trim();
@@ -98,7 +98,7 @@ function checkAdmin(req, url) {
   // 先 hash 成等長再比對，避免長度不同時 timingSafeEqual 丟例外/洩漏長度
   const a = crypto.createHash('sha256').update(given).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
-  if (!given || !crypto.timingSafeEqual(a, b)) return { code: 401, error: '未授權' };
+  if (!given || !crypto.timingSafeEqual(a, b)) return { code: 401, error: 'Unauthorized' };
   return null;
 }
 
@@ -130,12 +130,12 @@ export async function handleWaitlist(req, res, url, ctx) {
   const p = url.pathname.replace(/\/+$/, '');
 
   if (p === '/api/waitlist') {
-    if (req.method !== 'POST') return send(res, 405, { error: '不支援的請求方法' }, undefined, { Allow: 'POST' });
+    if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' }, undefined, { Allow: 'POST' });
     const ip = clientIp(req);
-    if (rateLimited(ip)) return send(res, 429, { error: '送出太頻繁了，請一分鐘後再試' }, undefined, { 'Retry-After': '60' });
+    if (rateLimited(ip)) return send(res, 429, { error: 'Too many requests. Please try again in a minute.' }, undefined, { 'Retry-After': '60' });
 
     let body;
-    try { body = await readJson(req); } catch { return send(res, 400, { error: '資料格式錯誤' }); }
+    try { body = await readJson(req); } catch { return send(res, 400, { error: 'Invalid request data' }); }
 
     // honeypot：有填就假裝成功
     if (body && typeof body === 'object' && typeof body.website === 'string' && body.website.trim()) {
@@ -167,18 +167,18 @@ export async function handleWaitlist(req, res, url, ctx) {
     try { await write; } catch (e) {
       store.emails.delete(v.email);
       console.error('waitlist write failed', e);
-      return send(res, 500, { error: '系統暫時無法儲存，請稍後再試' });
+      return send(res, 500, { error: 'We could not save your signup right now. Please try again later.' });
     }
     return send(res, 200, { ok: true, duplicate: false });
   }
 
   if (p === '/api/waitlist/count') {
-    if (req.method !== 'GET') return send(res, 405, { error: '不支援的請求方法' }, undefined, { Allow: 'GET' });
+    if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' }, undefined, { Allow: 'GET' });
     return send(res, 200, { count: store.emails.size });
   }
 
   if (p === '/api/waitlist/list' || p === '/api/waitlist/export.csv') {
-    if (req.method !== 'GET') return send(res, 405, { error: '不支援的請求方法' }, undefined, { Allow: 'GET' });
+    if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' }, undefined, { Allow: 'GET' });
     const denied = checkAdmin(req, url);
     if (denied) return send(res, denied.code, { error: denied.error });
     const rows = await readAll(store);
@@ -190,5 +190,5 @@ export async function handleWaitlist(req, res, url, ctx) {
     return send(res, 200, { count: rows.length, rows });
   }
 
-  return send(res, 404, { error: '找不到此 API' });
+  return send(res, 404, { error: 'Not found' });
 }

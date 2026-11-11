@@ -74,7 +74,7 @@ function readJson(req) {
   });
 }
 const ID_RE = /^[a-z0-9-]{8,40}$/;
-const cleanName = s => String(s || '匿名').replace(/[<>&"'\n\r]/g, '').slice(0, 20) || '匿名';
+const cleanName = s => String(s || 'Anonymous').replace(/[<>&"'\n\r]/g, '').slice(0, 20) || 'Anonymous';
 
 async function readSessionLines(id) {
   const file = path.join(SESS_DIR, id + '.jsonl');
@@ -267,7 +267,7 @@ wss.on('connection', (ws, req, info) => {
     });
   } else {
     const r = rooms.get(info.room);
-    if (!r) { wsSend(ws, { t: 'error', error: '找不到這個房號，請確認電腦畫面上的號碼' }); ws.close(); return; }
+    if (!r) { wsSend(ws, { t: 'error', error: 'Room not found. Check the code shown on the game screen.' }); ws.close(); return; }
     r.pads.add(ws);
     wsSend(ws, { t: 'joined', room: info.room });
     wsSend(r.game, { t: 'padJoined', pads: r.pads.size });

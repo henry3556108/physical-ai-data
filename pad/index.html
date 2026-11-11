@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0d0f12">
-<title>挖土機遙控器</title>
+<title>Excavator Controller</title>
 <style>
   :root { --yellow:#f5b800; --bg:#0d0f12; --panel:#161a20; --line:#2a3038; --text:#e9edf2; --muted:#8d97a5; --red:#ff4d4d; --green:#3ddc84; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; }
@@ -41,20 +41,20 @@
 </head>
 <body>
 <div id="join">
-  <div style="font-size:26px;font-weight:800">🚜 挖土機<span style="color:var(--yellow)">遙控器</span></div>
-  <div class="muted">輸入電腦畫面上的 4 碼房號</div>
+  <div style="font-size:26px;font-weight:800">🚜 Excavator <span style="color:var(--yellow)">Controller</span></div>
+  <div class="muted">Enter the 4-digit room code shown on the game screen</div>
   <input id="roomIn" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
-  <button class="btn" id="joinBtn">連線</button>
+  <button class="btn" id="joinBtn">Connect</button>
   <div class="muted" id="joinMsg"></div>
 </div>
 
-<div id="rotate"><div style="font-size:44px">📱↻</div><div>請把手機轉成橫向</div><div class="muted">建議關掉螢幕旋轉鎖定</div></div>
+<div id="rotate"><div style="font-size:44px">📱↻</div><div>Rotate your phone to landscape</div><div class="muted">Turn off rotation lock if needed</div></div>
 
 <div id="pad">
-  <div class="top"><span><span class="dot" id="dot"></span><span id="conn">連線中</span></span><span id="lat"></span></div>
+  <div class="top"><span><span class="dot" id="dot"></span><span id="conn">Connecting</span></span><span id="lat"></span></div>
   <div class="stick" id="stickL">
-    <span class="stickName">左搖桿</span>
-    <div class="ring"><div class="knob"></div><span class="lbl t">小臂伸出</span><span class="lbl b">小臂收回</span><span class="lbl l">迴轉左</span><span class="lbl r">迴轉右</span></div>
+    <span class="stickName">Left stick</span>
+    <div class="ring"><div class="knob"></div><span class="lbl t">Arm out</span><span class="lbl b">Arm in</span><span class="lbl l">Swing L</span><span class="lbl r">Swing R</span></div>
   </div>
   <div class="mid">
     <div id="stat">—</div>
@@ -62,13 +62,13 @@
       <span></span><div class="tb" data-d="1">▲</div><span></span>
       <div class="tb" data-t="1">⟲</div><div class="tb" data-d="-1">▼</div><div class="tb" data-t="-1">⟳</div>
     </div>
-    <div class="muted" style="font-size:11px">履帶 前進／後退／原地轉</div>
-    <button class="btn" id="mainBtn">發動</button>
-    <div style="display:flex;gap:6px"><button class="small" id="viewBtn">切換視角</button><button class="small" id="fsBtn">全螢幕</button></div>
+    <div class="muted" style="font-size:11px">Tracks: forward / reverse / turn</div>
+    <button class="btn" id="mainBtn">Start</button>
+    <div style="display:flex;gap:6px"><button class="small" id="viewBtn">View</button><button class="small" id="fsBtn">Fullscreen</button></div>
   </div>
   <div class="stick" id="stickR">
-    <span class="stickName">右搖桿</span>
-    <div class="ring"><div class="knob"></div><span class="lbl t">大臂下降</span><span class="lbl b">大臂上升</span><span class="lbl l">收斗</span><span class="lbl r">倒斗</span></div>
+    <span class="stickName">Right stick</span>
+    <div class="ring"><div class="knob"></div><span class="lbl t">Boom down</span><span class="lbl b">Boom up</span><span class="lbl l">Curl</span><span class="lbl r">Dump</span></div>
   </div>
 </div>
 
@@ -136,7 +136,7 @@
 
   function setPhase(p) {
     state.phase = p;
-    $('mainBtn').textContent = p === 'menu' ? '發動' : p === 'play' ? '收工' : '再拆一棟';
+    $('mainBtn').textContent = p === 'menu' ? 'Start' : p === 'play' ? 'Finish' : 'Play again';
   }
 
   // ---------- 連線 ----------
@@ -145,12 +145,12 @@
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     closedByUs = false;
     ws = new WebSocket(`${proto}://${location.host}/ws?role=pad&room=${code}`);
-    $('conn').textContent = '連線中';
+    $('conn').textContent = 'Connecting';
     ws.onmessage = ev => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (m.t === 'joined') {
         $('join').style.display = 'none'; $('pad').style.display = 'block'; document.body.classList.add('playing');
-        $('dot').classList.add('on'); $('conn').textContent = '已連線 · 房號 ' + code;
+        $('dot').classList.add('on'); $('conn').textContent = 'Connected · Room ' + code;
         history.replaceState(null, '', '?room=' + code);
         buzz([20, 40, 20]);
       } else if (m.t === 'error') {
@@ -161,19 +161,19 @@
         buzz(Math.min(400, m.ms || 60));
       } else if (m.t === 'state') {
         if (m.phase) setPhase(m.phase);
-        if (m.phase === 'play' && m.demo != null) $('stat').textContent = `拆除 ${m.demo}% · ${m.time}s`;
-        else if (m.phase === 'result') $('stat').textContent = m.score != null ? `得分 ${m.score} · ${'★'.repeat(m.stars || 0)}` : '結算中';
-        else if (m.phase === 'menu') $('stat').textContent = '按「發動」開始';
-        if (m.latency != null) $('lat').textContent = m.latency ? `模擬延遲 ${m.latency}ms` : '';
+        if (m.phase === 'play' && m.demo != null) $('stat').textContent = `Demolished ${m.demo}% · ${m.time}s`;
+        else if (m.phase === 'result') $('stat').textContent = m.score != null ? `Score ${m.score} · ${'★'.repeat(m.stars || 0)}` : 'Scoring…';
+        else if (m.phase === 'menu') $('stat').textContent = 'Tap Start to begin';
+        if (m.latency != null) $('lat').textContent = m.latency ? `Simulated latency ${m.latency}ms` : '';
       } else if (m.t === 'gameGone') {
         closedByUs = true;
-        $('dot').classList.remove('on'); $('conn').textContent = '遊戲畫面已關閉，請重新掃描 QR code';
+        $('dot').classList.remove('on'); $('conn').textContent = 'Game screen closed. Scan the QR code again.';
       }
     };
     ws.onclose = () => {
       $('dot').classList.remove('on');
       if (closedByUs) return;
-      $('conn').textContent = '斷線，重新連線中…';
+      $('conn').textContent = 'Disconnected, reconnecting…';
       setTimeout(() => connect(room), 1500);
     };
     clearInterval(sendTimer);
@@ -187,7 +187,7 @@
   const q = new URLSearchParams(location.search).get('room');
   $('joinBtn').addEventListener('click', () => {
     const v = $('roomIn').value.trim();
-    if (!/^\d{4}$/.test(v)) { $('joinMsg').textContent = '房號是 4 位數字'; return; }
+    if (!/^\d{4}$/.test(v)) { $('joinMsg').textContent = 'The room code is 4 digits'; return; }
     connect(v);
   });
   if (q && /^\d{4}$/.test(q)) { $('roomIn').value = q; connect(q); }

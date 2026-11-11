@@ -278,10 +278,10 @@ function buildHouse(cfg, palette, kind) {
 }
 
 const TREASURE_TYPES = [
-  { name: '金條', size: [0.55, 0.28, 0.32], color: 0xffcc33, pts: 300, emissive: 0x664400 },
-  { name: '古董花瓶', size: [0.38, 0.6, 0.38], color: 0x2bb3a3, pts: 400, emissive: 0x0a3a35 },
-  { name: '老保險箱', size: [0.6, 0.6, 0.6], color: 0x3f5f3a, pts: 500, emissive: 0x1a2a10 },
-  { name: '玉珮', size: [0.35, 0.18, 0.35], color: 0x7fe0a0, pts: 600, emissive: 0x1a5a30 },
+  { name: 'Gold bar', size: [0.55, 0.28, 0.32], color: 0xffcc33, pts: 300, emissive: 0x664400 },
+  { name: 'Antique vase', size: [0.38, 0.6, 0.38], color: 0x2bb3a3, pts: 400, emissive: 0x0a3a35 },
+  { name: 'Old safe', size: [0.6, 0.6, 0.6], color: 0x3f5f3a, pts: 500, emissive: 0x1a2a10 },
+  { name: 'Jade pendant', size: [0.35, 0.18, 0.35], color: 0x7fe0a0, pts: 600, emissive: 0x1a5a30 },
 ];
 function placeTreasures(n) {
   const { cx, cz, w, d, courses, bh } = TARGET;
@@ -463,9 +463,9 @@ function connectPadRelay() {
       ui.pairQr.src = '/api/qr?text=' + encodeURIComponent(url);
     } else if (m.t === 'padJoined' || m.t === 'padLeft') {
       pad.pads = m.pads;
-      ui.pairStatus.textContent = m.pads ? `已連線 ${m.pads} 支手機` : '等待手機連線';
+      ui.pairStatus.textContent = m.pads ? `${m.pads} phone${m.pads > 1 ? 's' : ''} connected` : 'Waiting for phone…';
       ui.pairStatus.classList.toggle('on', m.pads > 0);
-      toast(m.t === 'padJoined' ? '📱 手機遙控器已連線' : '📱 手機遙控器已斷線');
+      toast(m.t === 'padJoined' ? '📱 Phone controller connected' : '📱 Phone controller disconnected');
       if (game.phase === 'play') logEvent(m.t === 'padJoined' ? 'pad_joined' : 'pad_left', { pads: m.pads });
       padSend({ t: 'state', phase: game.phase });
     } else if (m.t === 'in') {
@@ -482,7 +482,7 @@ function connectPadRelay() {
   };
   ws.onclose = () => {
     pad.ws = null; pad.room = null; pad.pads = 0;
-    ui.pairStatus.textContent = '重新連線中…'; ui.pairStatus.classList.remove('on');
+    ui.pairStatus.textContent = 'Reconnecting…'; ui.pairStatus.classList.remove('on');
     setTimeout(connectPadRelay, Math.min(8000, 1000 * 2 ** pad.retry++));
   };
 }
@@ -523,11 +523,11 @@ function setLatency(v) {
   ui.latency.value = game.latency; ui.latencyVal.textContent = game.latency + ' ms';
   ui.hLatency.textContent = game.latency + ' ms';
   store.set('latency', game.latency);
-  if (game.phase === 'play') { logEvent('latency_change', { value: game.latency }); toast(`通訊延遲 ${game.latency} ms`); }
+  if (game.phase === 'play') { logEvent('latency_change', { value: game.latency }); toast(`Latency ${game.latency} ms`); }
 }
 function toggleView() {
   thirdPerson = !thirdPerson;
-  ui.hView.textContent = thirdPerson ? '第三人稱（除錯）' : '駕駛艙';
+  ui.hView.textContent = thirdPerson ? 'Third person (debug)' : 'Cab';
 }
 let toastTimer;
 function toast(msg) {
@@ -680,7 +680,7 @@ function judge(now) {
     } else if (n > game.collateral) {
       if (game.phase === 'play') {
         logEvent('collateral', { count: n });
-        toast('⚠️ 砸到隔壁鄰居了！'); haptic(1, 300);
+        toast('⚠️ You hit the neighbor\'s house!'); haptic(1, 300);
       }
       game.collateral = n;
     }
@@ -690,12 +690,12 @@ function judge(now) {
     const t = tr.body.translation(), lv = tr.body.linvel();
     if (inTruck(t) && Math.hypot(lv.x, lv.y, lv.z) < 0.6) {
       tr.delivered = true; game.treasures++; game.treasurePts += tr.pts;
-      if (game.phase === 'play') { logEvent('treasure', { name: tr.name, pts: tr.pts }); toast(`💰 ${tr.name} 入袋 +${tr.pts}`); haptic(0.6, 200); }
+      if (game.phase === 'play') { logEvent('treasure', { name: tr.name, pts: tr.pts }); toast(`💰 ${tr.name} secured +${tr.pts}`); haptic(0.6, 200); }
     }
   }
   if (game.phase === 'play') {
     ui.finishHint.style.display = game.demo >= FINISH_RATIO ? 'block' : 'none';
-    if (game.demo >= FINISH_RATIO && !game.finishedOnce) { game.finishedOnce = true; toast('拆除達標！可以收工了'); logEvent('target_reached', {}); }
+    if (game.demo >= FINISH_RATIO && !game.finishedOnce) { game.finishedOnce = true; toast('Target reached! You can finish the job'); logEvent('target_reached', {}); }
   }
 }
 
@@ -743,7 +743,7 @@ async function upload(force = false) {
 }
 function setOnline(on) {
   game.online = on;
-  ui.hRec.textContent = on ? 'REC 遙測紀錄中' : 'REC 離線暫存中';
+  ui.hRec.textContent = on ? 'REC Telemetry recording' : 'REC Offline, buffering';
 }
 
 // ====================== 流程 ======================
@@ -751,7 +751,7 @@ async function startGame() {
   if (game.phase !== 'menu') return;
   initAudio();
   if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume();
-  const player = ui.playerName.value.trim() || '匿名';
+  const player = ui.playerName.value.trim() || 'Anonymous';
   store.set('name', player);
   setLatency(+ui.latency.value || 0);
   ui.startOverlay.style.display = 'none';
@@ -766,8 +766,8 @@ async function startGame() {
 }
 function tryFinish() {
   if (game.phase !== 'play') return;
-  if (game.demo < FINISH_RATIO) { toast(`拆除率還不到 ${FINISH_RATIO * 100}%`); return; }
-  endGame(true, '收工');
+  if (game.demo < FINISH_RATIO) { toast(`Demolition must reach ${FINISH_RATIO * 100}%`); return; }
+  endGame(true, 'finished');
 }
 async function endGame(completed, reason) {
   if (game.phase !== 'play') return;
@@ -782,21 +782,21 @@ async function endGame(completed, reason) {
     treasures: game.treasures, smoothness: smooth, reason };
   logEvent('finish', result);
   padSend({ t: 'state', phase: 'result', score, stars });
-  ui.rTitle.textContent = completed ? '收工！' : (reason === 'timeout' ? '時間到，工程延宕' : '工程中止');
+  ui.rTitle.textContent = completed ? 'Job done!' : (reason === 'timeout' ? 'Time\'s up: project overdue' : 'Job aborted');
   ui.rStars.innerHTML = [0, 1, 2].map(i => `<span class="${i < stars ? '' : 'off'}">★</span>`).join('');
   const row = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
-  ui.rTable.innerHTML = row('拆除率', Math.round(game.demo * 100) + '%') + row('用時', fmtTime(game.t))
-    + row('寶物', `${game.treasures} 件（+${game.treasurePts}）`) + row('附帶損害', game.collateral + ' 塊')
-    + row('操作平順度', smooth + ' / 100') + row('通訊延遲', game.latency + ' ms')
-    + row('遙測樣本', game.sampleCount.toLocaleString() + ' 筆') + row('<b>總分</b>', `<b>${score.toLocaleString()}</b>`);
-  ui.rRank.textContent = '上傳成績中…';
+  ui.rTable.innerHTML = row('Demolished', Math.round(game.demo * 100) + '%') + row('Time', fmtTime(game.t))
+    + row('Treasures', `${game.treasures} (+${game.treasurePts})`) + row('Collateral damage', game.collateral + ' bricks')
+    + row('Smoothness', smooth + ' / 100') + row('Network latency', game.latency + ' ms')
+    + row('Telemetry samples', game.sampleCount.toLocaleString()) + row('<b>Score</b>', `<b>${score.toLocaleString()}</b>`);
+  ui.rRank.textContent = 'Uploading score…';
   ui.resultOverlay.style.display = 'flex';
   await upload(true);
   try {
     if (!game.sessionId) throw new Error('offline');
     const r = await api('/api/session/end', { sessionId: game.sessionId, result });
-    ui.rRank.textContent = completed && r.rank ? `排行榜第 ${r.rank} 名。這局的 ${game.sampleCount.toLocaleString()} 筆操作數據已經存進訓練資料集。` : '這局的操作數據已經存進訓練資料集。';
-  } catch { ui.rRank.textContent = '連不上伺服器，這局沒有存到排行榜。'; }
+    ui.rRank.textContent = completed && r.rank ? `Leaderboard rank #${r.rank}. ${game.sampleCount.toLocaleString()} telemetry samples from this run were added to the training dataset.` : 'Telemetry from this run was added to the training dataset.';
+  } catch { ui.rRank.textContent = 'Could not reach the server; this run was not saved to the leaderboard.'; }
 }
 ui.startBtn.addEventListener('click', startGame);
 ui.againBtn.addEventListener('click', resetLevel);
@@ -886,9 +886,9 @@ function updateHud() {
   ui.hCollateral.textContent = game.collateral;
   ui.hCollateral.style.color = game.collateral ? 'var(--red)' : '';
   ui.hSamples.textContent = game.sampleCount.toLocaleString();
-  const srcName = { kbd: '鍵盤', gamepad: '手把', phone: '📱 手機' };
-  ui.hPad.textContent = pad.pads ? '📱 手機已連線' : (game.gamepad ? '手把' : '鍵盤');
-  if (game.lastSrc !== '-' && !pad.pads) ui.hPad.textContent = game.lastSrc.split('+').map(s => srcName[s] || s).join('＋');
+  const srcName = { kbd: 'Keyboard', gamepad: 'Gamepad', phone: '📱 Phone' };
+  ui.hPad.textContent = pad.pads ? '📱 Phone connected' : (game.gamepad ? 'Gamepad' : 'Keyboard');
+  if (game.lastSrc !== '-' && !pad.pads) ui.hPad.textContent = game.lastSrc.split('+').map(s => srcName[s] || s).join(' + ');
   const j = game.joints;
   ui.gSwing.textContent = Math.round(((j.swing * DEG) % 360 + 540) % 360 - 180) + '°';
   ui.gBoom.textContent = Math.round(-j.boom * DEG) + '°';

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>遠端都更挖土機</title>
+<title>Remote Excavator</title>
 <style>
   :root { --yellow:#f5b800; --bg:#0d0f12; --panel:rgba(12,14,18,.78); --text:#e9edf2; --muted:#9aa4b2; --red:#ff4d4d; --green:#3ddc84; }
   * { box-sizing:border-box; }
@@ -61,69 +61,69 @@
 <body>
 <div id="hudTL" class="hud panel" style="display:none">
   <div class="big" id="hTime">0:00</div>
-  <div class="row"><span>拆除進度</span><span id="hDemo">0%</span></div>
+  <div class="row"><span>Demolition</span><span id="hDemo">0%</span></div>
   <div class="bar" id="demoBar"><i></i></div>
-  <div class="row" style="margin-top:6px"><span>寶物</span><span id="hTreasure">0 / 3</span></div>
-  <div class="row"><span>附帶損害</span><span id="hCollateral">0</span></div>
+  <div class="row" style="margin-top:6px"><span>Treasures</span><span id="hTreasure">0 / 3</span></div>
+  <div class="row"><span>Collateral damage</span><span id="hCollateral">0</span></div>
 </div>
 <div id="hudTR" class="hud panel" style="display:none">
-  <div class="rec" id="hRec">REC 遙測紀錄中</div>
-  <div class="row"><span>模擬通訊延遲</span><span id="hLatency">0 ms</span></div>
-  <div class="row"><span>樣本</span><span id="hSamples">0</span></div>
-  <div class="row"><span>視角</span><span id="hView">駕駛艙</span></div>
-  <div class="row"><span>遙控器</span><span id="hPad">鍵盤</span></div>
+  <div class="rec" id="hRec">REC Telemetry recording</div>
+  <div class="row"><span>Simulated latency</span><span id="hLatency">0 ms</span></div>
+  <div class="row"><span>Samples</span><span id="hSamples">0</span></div>
+  <div class="row"><span>View</span><span id="hView">Cab</span></div>
+  <div class="row"><span>Controller</span><span id="hPad">Keyboard</span></div>
 </div>
 <div id="hudB" class="hud panel" style="display:none">
-  <div class="gauge">迴轉<b id="gSwing">0°</b></div>
-  <div class="gauge">大臂<b id="gBoom">0°</b></div>
-  <div class="gauge">小臂<b id="gArm">0°</b></div>
-  <div class="gauge">挖斗<b id="gBucket">0°</b></div>
-  <div style="width:180px;font-size:12px;color:var(--muted)">液壓負載<div class="bar" id="loadBar"><i></i></div></div>
+  <div class="gauge">Swing<b id="gSwing">0°</b></div>
+  <div class="gauge">Boom<b id="gBoom">0°</b></div>
+  <div class="gauge">Arm<b id="gArm">0°</b></div>
+  <div class="gauge">Bucket<b id="gBucket">0°</b></div>
+  <div style="width:180px;font-size:12px;color:var(--muted)">Hydraulic load<div class="bar" id="loadBar"><i></i></div></div>
 </div>
 <div id="help" class="hud panel" style="display:none">
-  <kbd>H</kbd> 操作說明　<kbd>V</kbd> 切換視角　<kbd>[</kbd><kbd>]</kbd> 調延遲　按住滑鼠右鍵拖曳可轉頭
+  <kbd>H</kbd> help · <kbd>V</kbd> toggle view · <kbd>[</kbd><kbd>]</kbd> latency · right-drag to look around
 </div>
-<div id="finishHint">拆除達標！按 <b>Enter</b> 收工結算</div>
+<div id="finishHint">Target reached! Press <b>Enter</b> to finish the job</div>
 <div id="toast"></div>
 
 <div id="startOverlay" class="overlay">
   <div class="card">
     <div class="stripe"></div>
-    <h1>遠端都更<em>挖土機</em></h1>
-    <p class="sub">坐進駕駛艙，把老屋拆乾淨，不要砸到隔壁鄰居。你的每一個操作都會記錄下來，成為訓練自主重機 AI 的真實數據。</p>
-    <label for="playerName">玩家名稱</label>
-    <input id="playerName" type="text" maxlength="20" placeholder="例如：怪手阿明" autocomplete="off">
-    <label for="latency">模擬遠端通訊延遲：<b id="latencyVal">0 ms</b></label>
+    <h1>Remote <em>Excavator</em></h1>
+    <p class="sub">Take the operator seat, tear down the old building, and don't hit the neighbor's house. Every move you make is recorded as real-world teleoperation data for training autonomous heavy machines.</p>
+    <label for="playerName">Player name</label>
+    <input id="playerName" type="text" maxlength="20" placeholder="e.g. Digger Dan" autocomplete="off">
+    <label for="latency">Simulated remote network latency: <b id="latencyVal">0 ms</b></label>
     <input id="latency" type="range" min="0" max="500" step="50" value="0">
     <div class="controls">
-      <div><b>左搖桿</b>（ISO 配置）<br><kbd>A</kbd><kbd>D</kbd> 上部迴轉 左／右<br><kbd>W</kbd><kbd>S</kbd> 小臂 伸出／收回</div>
-      <div><b>右搖桿</b><br><kbd>I</kbd><kbd>K</kbd> 大臂 下降／上升<br><kbd>J</kbd><kbd>L</kbd> 挖斗 收斗／倒斗</div>
-      <div><b>履帶</b><br><kbd>↑</kbd><kbd>↓</kbd> 前進／後退　<kbd>←</kbd><kbd>→</kbd> 原地轉向</div>
-      <div><b>任務</b><br>拆除率達 75% 後按 <kbd>Enter</kbd> 收工<br>把金色寶物鏟進右邊的卡車有加分</div>
+      <div><b>Left stick</b> (ISO pattern)<br><kbd>A</kbd><kbd>D</kbd> swing left / right<br><kbd>W</kbd><kbd>S</kbd> arm out / in</div>
+      <div><b>Right stick</b><br><kbd>I</kbd><kbd>K</kbd> boom down / up<br><kbd>J</kbd><kbd>L</kbd> bucket curl / dump</div>
+      <div><b>Tracks</b><br><kbd>↑</kbd><kbd>↓</kbd> forward / reverse · <kbd>←</kbd><kbd>→</kbd> turn in place</div>
+      <div><b>Mission</b><br>Reach 75% demolition, then press <kbd>Enter</kbd><br>Bonus: scoop hidden treasures into the truck</div>
     </div>
     <div id="pairBox">
-      <img id="pairQr" alt="手機遙控器 QR code">
+      <img id="pairQr" alt="Phone controller QR code">
       <div>
-        <b style="color:var(--yellow)">📱 用手機當遙控器</b>
-        <p>手機和這台電腦連同一個網路，掃描 QR code，或打開<br><code id="pairUrl">…</code></p>
-        <p>房號 <span id="pairRoom" class="room">----</span>　<span id="pairStatus" class="pairState">等待手機連線</span></p>
+        <b style="color:var(--yellow)">📱 Use your phone as the controller</b>
+        <p>Scan the QR code, or open<br><code id="pairUrl">…</code></p>
+        <p>Room <span id="pairRoom" class="room">----</span>　<span id="pairStatus" class="pairState">Waiting for phone…</span></p>
       </div>
     </div>
-    <p class="sub" style="margin-top:14px;font-size:13px">也支援鍵盤和 Xbox／PS 手把：左右搖桿同上，十字鍵控制履帶，A 鈕收工。手機連上後，在手機按「發動」也能開始。</p>
-    <button class="btn" id="startBtn">發動引擎</button>
-    <a class="btn ghost" href="/dashboard/" target="_blank" style="text-decoration:none">開啟數據後台 ↗</a>
+    <p class="sub" style="margin-top:14px;font-size:13px">Keyboard and Xbox / PlayStation gamepads also work: sticks as above, D-pad for tracks, A to finish. Once your phone is connected, tap "Start engine" on it to begin.</p>
+    <button class="btn" id="startBtn">Start engine</button>
+    <a class="btn ghost" href="/dashboard/" target="_blank" style="text-decoration:none">Open telemetry dashboard ↗</a>
   </div>
 </div>
 
 <div id="resultOverlay" class="overlay" style="display:none">
   <div class="card">
     <div class="stripe"></div>
-    <h1 id="rTitle">收工！</h1>
+    <h1 id="rTitle">Job done!</h1>
     <div class="stars" id="rStars"></div>
     <table id="rTable"></table>
     <p class="sub" id="rRank" style="margin-top:14px"></p>
-    <button class="btn" id="againBtn">再拆一棟</button>
-    <a class="btn ghost" href="/dashboard/" target="_blank" style="text-decoration:none">看這局的數據 ↗</a>
+    <button class="btn" id="againBtn">Demolish another</button>
+    <a class="btn ghost" href="/dashboard/" target="_blank" style="text-decoration:none">View this run's data ↗</a>
   </div>
 </div>
 

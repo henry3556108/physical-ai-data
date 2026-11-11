@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="zh-Hant-TW">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#121214">
-<title>遠端都更挖土機｜搶先排隊</title>
-<meta name="description" content="第一人稱遠端挖土機體驗，開放搶先排隊。">
+<title>Remote Heavy Machines | Early Access</title>
+<meta name="description" content="Early access to remote heavy-machine experiences.">
 <style>
   :root {
     --bg: #121214;
@@ -138,8 +138,8 @@
 <div class="hazard" aria-hidden="true"></div>
 <main>
   <span class="tag">EARLY ACCESS</span>
-  <h1>遠端都更<span>挖土機</span></h1>
-  <p class="lead">第一人稱遠端挖土機體驗，開放搶先排隊。坐進駕駛座、隔著網路操控真實手感的挖土機，開放時第一個通知你。</p>
+  <h1>Operate real <span>heavy machines</span></h1>
+  <p class="lead">Early access to remote heavy-machine experiences. Take the operator's seat of a real excavator, in our café or remotely over the internet, with land, sea and air machines coming next. Join the waitlist and be the first to know when we open.</p>
 
   <div class="count" id="count" aria-live="polite"></div>
 
@@ -152,32 +152,32 @@
         <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" required>
       </div>
       <div class="field">
-        <label for="name">姓名</label>
-        <input id="name" name="name" type="text" autocomplete="name" maxlength="40" placeholder="怎麼稱呼你" required>
+        <label for="name">Name</label>
+        <input id="name" name="name" type="text" autocomplete="name" maxlength="40" placeholder="What should we call you?" required>
       </div>
       <div class="field">
-        <label for="birthday">生日</label>
+        <label for="birthday">Date of birth</label>
         <input id="birthday" name="birthday" type="date" autocomplete="bday" min="1900-01-01" required>
       </div>
       <div class="hp" aria-hidden="true">
-        <label for="website">網站（請留空）</label>
+        <label for="website">Website (leave blank)</label>
         <input id="website" name="website" type="text" tabindex="-1" autocomplete="off">
       </div>
 
-      <button type="submit" id="btn">加入排隊</button>
-      <p class="privacy">僅用於通知開放體驗，不會提供給第三方</p>
+      <button type="submit" id="btn">Join the waitlist</button>
+      <p class="privacy">Only used to notify you about early access. Never shared with third parties.</p>
     </form>
 
     <div class="done" id="done" role="status">
       <div class="badge" aria-hidden="true">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#1a1400" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
       </div>
-      <div class="big" id="doneTitle">報名成功！</div>
-      <p id="doneText">開放體驗時會寄信通知你，敬請期待。</p>
+      <div class="big" id="doneTitle">You're on the list!</div>
+      <p id="doneText">We'll email you as soon as early access opens.</p>
     </div>
   </div>
 
-  <footer>© 遠端都更挖土機</footer>
+  <footer>© Remote Heavy Machines</footer>
 </main>
 
 <script>
@@ -199,8 +199,8 @@
       .then(function (j) {
         if (!j || typeof j.count !== 'number' || j.count < 1) return;
         var el = $('count');
-        el.innerHTML = '<span class="dot"></span><span>已有 <b></b> 人排隊</span>';
-        el.querySelector('b').textContent = j.count.toLocaleString('zh-TW');
+        el.innerHTML = '<span class="dot"></span><span><b></b> people already in line</span>';
+        el.querySelector('b').textContent = j.count.toLocaleString('en-US');
       })
       .catch(function () {});
   }
@@ -212,13 +212,13 @@
     var email = $('email').value.trim();
     var name = $('name').value.trim();
     var birthday = $('birthday').value;
-    if (!email) return showErr('請填寫 Email');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showErr('Email 格式不正確');
-    if (!name) return showErr('請填寫姓名');
-    if (!birthday) return showErr('請填寫生日');
+    if (!email) return showErr('Please enter your email');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showErr('Please enter a valid email address');
+    if (!name) return showErr('Please enter your name');
+    if (!birthday) return showErr('Please enter your date of birth');
 
     btn.disabled = true;
-    btn.textContent = '送出中…';
+    btn.textContent = 'Submitting…';
     fetch('/api/waitlist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -230,18 +230,18 @@
       .then(function (res) {
         if (res.status === 200 && res.j.ok) {
           if (res.j.duplicate) {
-            $('doneTitle').textContent = '你已經在名單上了';
-            $('doneText').textContent = '這個 Email 先前已經報名過，開放時會通知你。';
+            $('doneTitle').textContent = "You're already on the list";
+            $('doneText').textContent = "This email is already signed up. We'll let you know when we open.";
           }
           form.style.display = 'none';
           $('done').classList.add('show');
           loadCount();
         } else {
-          showErr(res.j.error || '送出失敗，請稍後再試');
+          showErr(res.j.error || 'Something went wrong. Please try again later.');
         }
       })
-      .catch(function () { showErr('網路連線有問題，請稍後再試'); })
-      .then(function () { btn.disabled = false; btn.textContent = '加入排隊'; });
+      .catch(function () { showErr('Network error. Please check your connection and try again.'); })
+      .then(function () { btn.disabled = false; btn.textContent = 'Join the waitlist'; });
   });
 })();
 </script>
