@@ -430,12 +430,17 @@ function signPost(text, x, z, faceYaw, color) {
   scene.add(grp); level.extraMeshes.push(grp);
 }
 
+let lastLot = [];
 // Pick 1–3 random templates and place them in a fan in front of the crane, plus one protected house
 function generateLot() {
   // ?lot=0,4 forces specific templates (handy for demos and recordings)
-  const forced = (new URLSearchParams(location.search).get('lot') || '').split(',').map(Number).filter(i => TEMPLATES[i]).slice(0, 3);
+  const forced = (new URLSearchParams(location.search).get('lot') || '').split(',').filter(v => /^\d+$/.test(v.trim())).map(Number).filter(i => TEMPLATES[i]).slice(0, 3);
   const n = 1 + ((Math.random() * 3) | 0);
-  const pool = forced.length ? forced.map(i => TEMPLATES[i]) : [...TEMPLATES].sort(() => Math.random() - 0.5).slice(0, n);
+  // Random draw; prefer templates that were not in the previous lot so every round looks different
+  const shuffled = [...TEMPLATES].sort(() => Math.random() - 0.5);
+  const fresh = shuffled.filter(t => !lastLot.includes(t.name)), seen = shuffled.filter(t => lastLot.includes(t.name));
+  const pool = forced.length ? forced.map(i => TEMPLATES[i]) : [...fresh, ...seen].slice(0, n);
+  lastLot = pool.map(t => t.name);
   const placed = [];
   const tryPlace = (tpl, rMin, rMax) => {
     const br = footprintRadius(tpl);
