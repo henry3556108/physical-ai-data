@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121214">
+<title>遠端都更挖土機｜搶先排隊</title>
+<meta name="description" content="第一人稱遠端挖土機體驗，開放搶先排隊。">
+<style>
+  :root {
+    --bg: #121214;
+    --panel: #1b1b1f;
+    --line: #2c2c33;
+    --text: #f2f0ea;
+    --muted: #a19f98;
+    --accent: #f5b800;
+    --accent-ink: #1a1400;
+    --danger: #ff6b5a;
+    --ok: #7fd18b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    line-height: 1.6;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  .hazard {
+    height: 10px;
+    background: repeating-linear-gradient(-45deg, var(--accent) 0 14px, #111 14px 28px);
+  }
+  main {
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 28px 16px 40px;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    color: var(--accent-ink);
+    background: var(--accent);
+    padding: 2px 8px;
+    border-radius: 2px;
+  }
+  h1 {
+    font-size: 30px;
+    line-height: 1.2;
+    margin: 14px 0 8px;
+    font-weight: 900;
+    letter-spacing: .02em;
+  }
+  h1 span { color: var(--accent); }
+  .lead { color: var(--muted); margin: 0 0 18px; font-size: 15px; }
+  .count {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; color: var(--muted);
+    margin-bottom: 18px;
+    min-height: 22px;
+  }
+  .count b { color: var(--accent); font-size: 18px; font-variant-numeric: tabular-nums; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(245,184,0,.18); flex: none; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 20px 16px;
+  }
+  label { display: block; font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+  .field { margin-bottom: 16px; }
+  input {
+    width: 100%;
+    font: inherit;
+    font-size: 16px; /* 避免 iOS 自動縮放 */
+    color: var(--text);
+    background: #0f0f11;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 12px;
+    min-height: 48px;
+    color-scheme: dark;
+  }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(245,184,0,.25); }
+  .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  .err {
+    display: none;
+    color: var(--danger);
+    font-size: 14px;
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    background: rgba(255,107,90,.08);
+    border-left: 3px solid var(--danger);
+    border-radius: 2px;
+  }
+  .err.show { display: block; }
+  button {
+    width: 100%;
+    font: inherit;
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: .08em;
+    color: var(--accent-ink);
+    background: var(--accent);
+    border: 0;
+    border-radius: 4px;
+    min-height: 52px;
+    cursor: pointer;
+    box-shadow: inset 0 -4px 0 rgba(0,0,0,.22);
+  }
+  button:hover { filter: brightness(1.06); }
+  button:active { transform: translateY(1px); box-shadow: inset 0 -2px 0 rgba(0,0,0,.22); }
+  button:disabled { opacity: .6; cursor: progress; }
+  .privacy { font-size: 13px; color: var(--muted); margin: 14px 0 0; text-align: center; }
+  .done { display: none; text-align: center; padding: 8px 0; }
+  .done.show { display: block; }
+  .done .big { font-size: 22px; font-weight: 900; margin: 10px 0 6px; }
+  .done p { color: var(--muted); margin: 0; }
+  .badge {
+    width: 64px; height: 64px; margin: 0 auto;
+    border-radius: 50%;
+    background: var(--accent);
+    display: grid; place-items: center;
+  }
+  footer { text-align: center; font-size: 12px; color: #6d6b66; margin-top: 28px; }
+  @media (min-width: 600px) {
+    main { padding-top: 56px; }
+    h1 { font-size: 36px; }
+    .card { padding: 26px 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="hazard" aria-hidden="true"></div>
+<main>
+  <span class="tag">EARLY ACCESS</span>
+  <h1>遠端都更<span>挖土機</span></h1>
+  <p class="lead">第一人稱遠端挖土機體驗，開放搶先排隊。坐進駕駛座、隔著網路操控真實手感的挖土機，開放時第一個通知你。</p>
+
+  <div class="count" id="count" aria-live="polite"></div>
+
+  <div class="card">
+    <form id="form" novalidate>
+      <div class="err" id="err" role="alert"></div>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" required>
+      </div>
+      <div class="field">
+        <label for="name">姓名</label>
+        <input id="name" name="name" type="text" autocomplete="name" maxlength="40" placeholder="怎麼稱呼你" required>
+      </div>
+      <div class="field">
+        <label for="birthday">生日</label>
+        <input id="birthday" name="birthday" type="date" autocomplete="bday" min="1900-01-01" required>
+      </div>
+      <div class="hp" aria-hidden="true">
+        <label for="website">網站（請留空）</label>
+        <input id="website" name="website" type="text" tabindex="-1" autocomplete="off">
+      </div>
+
+      <button type="submit" id="btn">加入排隊</button>
+      <p class="privacy">僅用於通知開放體驗，不會提供給第三方</p>
+    </form>
+
+    <div class="done" id="done" role="status">
+      <div class="badge" aria-hidden="true">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#1a1400" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+      </div>
+      <div class="big" id="doneTitle">報名成功！</div>
+      <p id="doneText">開放體驗時會寄信通知你，敬請期待。</p>
+    </div>
+  </div>
+
+  <footer>© 遠端都更挖土機</footer>
+</main>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var form = $('form'), btn = $('btn'), err = $('err');
+
+  // 生日 max = 今天（本地時間）
+  var d = new Date();
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  $('birthday').max = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+
+  function showErr(msg) { err.textContent = msg; err.classList.add('show'); }
+  function clearErr() { err.textContent = ''; err.classList.remove('show'); }
+
+  function loadCount() {
+    fetch('/api/waitlist/count', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || typeof j.count !== 'number' || j.count < 1) return;
+        var el = $('count');
+        el.innerHTML = '<span class="dot"></span><span>已有 <b></b> 人排隊</span>';
+        el.querySelector('b').textContent = j.count.toLocaleString('zh-TW');
+      })
+      .catch(function () {});
+  }
+  loadCount();
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    clearErr();
+    var email = $('email').value.trim();
+    var name = $('name').value.trim();
+    var birthday = $('birthday').value;
+    if (!email) return showErr('請填寫 Email');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showErr('Email 格式不正確');
+    if (!name) return showErr('請填寫姓名');
+    if (!birthday) return showErr('請填寫生日');
+
+    btn.disabled = true;
+    btn.textContent = '送出中…';
+    fetch('/api/waitlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, name: name, birthday: birthday, website: $('website').value })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, j: j }; });
+      })
+      .then(function (res) {
+        if (res.status === 200 && res.j.ok) {
+          if (res.j.duplicate) {
+            $('doneTitle').textContent = '你已經在名單上了';
+            $('doneText').textContent = '這個 Email 先前已經報名過，開放時會通知你。';
+          }
+          form.style.display = 'none';
+          $('done').classList.add('show');
+          loadCount();
+        } else {
+          showErr(res.j.error || '送出失敗，請稍後再試');
+        }
+      })
+      .catch(function () { showErr('網路連線有問題，請稍後再試'); })
+      .then(function () { btn.disabled = false; btn.textContent = '加入排隊'; });
+  });
+})();
+</script>
+</body>
+</html>

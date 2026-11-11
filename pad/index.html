@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0d0f12">
+<title>挖土機遙控器</title>
+<style>
+  :root { --yellow:#f5b800; --bg:#0d0f12; --panel:#161a20; --line:#2a3038; --text:#e9edf2; --muted:#8d97a5; --red:#ff4d4d; --green:#3ddc84; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"PingFang TC","Noto Sans TC",sans-serif; overflow:hidden; overscroll-behavior:none; touch-action:none; }
+  #join { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:16px; text-align:center; }
+  #join input { font-size:34px; width:200px; text-align:center; letter-spacing:10px; padding:10px; border-radius:12px; border:1px solid var(--line); background:#0f1216; color:var(--text); -webkit-user-select:text; user-select:text; }
+  .btn { border:0; border-radius:12px; background:var(--yellow); color:#111; font-weight:800; font-size:18px; padding:14px 28px; }
+  .muted { color:var(--muted); font-size:14px; }
+  #pad { position:fixed; inset:0; display:none; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  .top { position:absolute; top:8px; left:50%; transform:translateX(-50%); display:flex; gap:10px; align-items:center; font-size:13px; color:var(--muted); white-space:nowrap; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--red); display:inline-block; margin-right:5px; }
+  .dot.on { background:var(--green); }
+  .stick { position:absolute; top:44px; bottom:12px; width:38%; display:flex; align-items:center; justify-content:center; }
+  #stickL { left:8px; } #stickR { right:8px; }
+  .ring { position:relative; width:min(170px, 70%); aspect-ratio:1; border-radius:50%; background:radial-gradient(circle,#1d2229 0,#14181d 70%); border:2px solid var(--line); }
+  .ring::before, .ring::after { content:""; position:absolute; background:var(--line); }
+  .ring::before { left:50%; top:10%; bottom:10%; width:1px; } .ring::after { top:50%; left:10%; right:10%; height:1px; }
+  .knob { position:absolute; left:50%; top:50%; width:38%; aspect-ratio:1; margin:-19% 0 0 -19%; border-radius:50%; background:var(--yellow); box-shadow:0 4px 16px rgba(0,0,0,.6); z-index:1; }
+  .lbl { position:absolute; font-size:11px; color:var(--muted); pointer-events:none; }
+  .lbl.t { top:-20px; left:50%; transform:translateX(-50%); } .lbl.b { bottom:-20px; left:50%; transform:translateX(-50%); }
+  .lbl.l { left:-6px; top:50%; transform:translate(-100%,-50%); } .lbl.r { right:-6px; top:50%; transform:translate(100%,-50%); }
+  .stickName { position:absolute; top:4px; font-size:12px; color:var(--yellow); font-weight:700; }
+  .mid { position:absolute; left:38%; right:38%; top:40px; bottom:12px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; }
+  .tracks { display:grid; grid-template-columns:repeat(3,48px); grid-template-rows:repeat(2,44px); gap:6px; }
+  .tb { border:1px solid var(--line); background:var(--panel); color:var(--text); border-radius:10px; font-size:18px; display:flex; align-items:center; justify-content:center; }
+  .tb.on { background:var(--yellow); color:#111; }
+  .small { font-size:12px; padding:8px 12px; border-radius:10px; border:1px solid var(--line); background:var(--panel); color:var(--text); }
+  #mainBtn { font-size:16px; padding:10px 18px; }
+  #stat { font-size:13px; color:var(--muted); text-align:center; font-variant-numeric:tabular-nums; }
+  #rotate { display:none; position:fixed; inset:0; background:var(--bg); z-index:5; align-items:center; justify-content:center; flex-direction:column; gap:10px; text-align:center; padding:16px; }
+  @media (orientation:portrait) { body.playing #rotate { display:flex; } }
+</style>
+</head>
+<body>
+<div id="join">
+  <div style="font-size:26px;font-weight:800">🚜 挖土機<span style="color:var(--yellow)">遙控器</span></div>
+  <div class="muted">輸入電腦畫面上的 4 碼房號</div>
+  <input id="roomIn" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
+  <button class="btn" id="joinBtn">連線</button>
+  <div class="muted" id="joinMsg"></div>
+</div>
+
+<div id="rotate"><div style="font-size:44px">📱↻</div><div>請把手機轉成橫向</div><div class="muted">建議關掉螢幕旋轉鎖定</div></div>
+
+<div id="pad">
+  <div class="top"><span><span class="dot" id="dot"></span><span id="conn">連線中</span></span><span id="lat"></span></div>
+  <div class="stick" id="stickL">
+    <span class="stickName">左搖桿</span>
+    <div class="ring"><div class="knob"></div><span class="lbl t">小臂伸出</span><span class="lbl b">小臂收回</span><span class="lbl l">迴轉左</span><span class="lbl r">迴轉右</span></div>
+  </div>
+  <div class="mid">
+    <div id="stat">—</div>
+    <div class="tracks">
+      <span></span><div class="tb" data-d="1">▲</div><span></span>
+      <div class="tb" data-t="1">⟲</div><div class="tb" data-d="-1">▼</div><div class="tb" data-t="-1">⟳</div>
+    </div>
+    <div class="muted" style="font-size:11px">履帶 前進／後退／原地轉</div>
+    <button class="btn" id="mainBtn">發動</button>
+    <div style="display:flex;gap:6px"><button class="small" id="viewBtn">切換視角</button><button class="small" id="fsBtn">全螢幕</button></div>
+  </div>
+  <div class="stick" id="stickR">
+    <span class="stickName">右搖桿</span>
+    <div class="ring"><div class="knob"></div><span class="lbl t">大臂下降</span><span class="lbl b">大臂上升</span><span class="lbl l">收斗</span><span class="lbl r">倒斗</span></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const state = { lx: 0, ly: 0, rx: 0, ry: 0, drive: 0, turn: 0, phase: 'menu' };
+  let ws = null, room = null, sendTimer = null, wakeLock = null, closedByUs = false;
+
+  // ---------- 搖桿 ----------
+  function bindStick(el, kx, ky) {
+    const ring = el.querySelector('.ring'), knob = el.querySelector('.knob');
+    let id = null, cx = 0, cy = 0, R = 1;
+    const set = (x, y) => {
+      state[kx] = x; state[ky] = y;
+      knob.style.transform = `translate(${x * R}px, ${y * R}px)`;
+    };
+    el.addEventListener('pointerdown', e => {
+      if (id !== null) return;
+      id = e.pointerId; el.setPointerCapture(id);
+      const r = ring.getBoundingClientRect();
+      cx = r.left + r.width / 2; cy = r.top + r.height / 2; R = r.width * 0.36;
+      move(e);
+    });
+    const move = e => {
+      if (e.pointerId !== id) return;
+      let x = (e.clientX - cx) / R, y = (e.clientY - cy) / R;
+      const m = Math.hypot(x, y); if (m > 1) { x /= m; y /= m; }
+      set(x, y);
+    };
+    el.addEventListener('pointermove', move);
+    const up = e => { if (e.pointerId !== id) return; id = null; set(0, 0); };
+    el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  }
+  bindStick($('stickL'), 'lx', 'ly');
+  bindStick($('stickR'), 'rx', 'ry');
+
+  // ---------- 履帶按鈕（按住） ----------
+  document.querySelectorAll('.tb').forEach(b => {
+    const on = e => { e.preventDefault(); b.classList.add('on'); if (b.dataset.d) state.drive = +b.dataset.d; if (b.dataset.t) state.turn = +b.dataset.t; buzz(10); };
+    const off = () => { b.classList.remove('on'); if (b.dataset.d) state.drive = 0; if (b.dataset.t) state.turn = 0; };
+    b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off);
+    b.addEventListener('pointercancel', off); b.addEventListener('pointerleave', off);
+  });
+
+  const buzz = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
+  const send = o => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
+  $('mainBtn').addEventListener('click', () => {
+    buzz(30);
+    if (state.phase === 'menu') send({ t: 'btn', b: 'start' });
+    else if (state.phase === 'play') send({ t: 'btn', b: 'finish' });
+    else send({ t: 'btn', b: 'again' });
+    goFull();
+  });
+  $('viewBtn').addEventListener('click', () => send({ t: 'btn', b: 'view' }));
+  $('fsBtn').addEventListener('click', goFull);
+  function goFull() {
+    const d = document.documentElement;
+    try { if (!document.fullscreenElement && d.requestFullscreen) d.requestFullscreen().then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {})).catch(() => {}); } catch {}
+    keepAwake();
+  }
+  async function keepAwake() { try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch {} }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && room) keepAwake(); });
+
+  function setPhase(p) {
+    state.phase = p;
+    $('mainBtn').textContent = p === 'menu' ? '發動' : p === 'play' ? '收工' : '再拆一棟';
+  }
+
+  // ---------- 連線 ----------
+  function connect(code) {
+    room = code;
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    closedByUs = false;
+    ws = new WebSocket(`${proto}://${location.host}/ws?role=pad&room=${code}`);
+    $('conn').textContent = '連線中';
+    ws.onmessage = ev => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.t === 'joined') {
+        $('join').style.display = 'none'; $('pad').style.display = 'block'; document.body.classList.add('playing');
+        $('dot').classList.add('on'); $('conn').textContent = '已連線 · 房號 ' + code;
+        history.replaceState(null, '', '?room=' + code);
+        buzz([20, 40, 20]);
+      } else if (m.t === 'error') {
+        closedByUs = true;
+        $('join').style.display = 'flex'; $('pad').style.display = 'none'; document.body.classList.remove('playing');
+        $('joinMsg').textContent = m.error;
+      } else if (m.t === 'haptic') {
+        buzz(Math.min(400, m.ms || 60));
+      } else if (m.t === 'state') {
+        if (m.phase) setPhase(m.phase);
+        if (m.phase === 'play' && m.demo != null) $('stat').textContent = `拆除 ${m.demo}% · ${m.time}s`;
+        else if (m.phase === 'result') $('stat').textContent = m.score != null ? `得分 ${m.score} · ${'★'.repeat(m.stars || 0)}` : '結算中';
+        else if (m.phase === 'menu') $('stat').textContent = '按「發動」開始';
+        if (m.latency != null) $('lat').textContent = m.latency ? `模擬延遲 ${m.latency}ms` : '';
+      } else if (m.t === 'gameGone') {
+        closedByUs = true;
+        $('dot').classList.remove('on'); $('conn').textContent = '遊戲畫面已關閉，請重新掃描 QR code';
+      }
+    };
+    ws.onclose = () => {
+      $('dot').classList.remove('on');
+      if (closedByUs) return;
+      $('conn').textContent = '斷線，重新連線中…';
+      setTimeout(() => connect(room), 1500);
+    };
+    clearInterval(sendTimer);
+    // 30Hz 持續送出（含全 0），遊戲端 400ms 沒收到就自動放開搖桿
+    sendTimer = setInterval(() => {
+      const r = v => Math.round(v * 1000) / 1000;
+      send({ t: 'in', lx: r(state.lx), ly: r(state.ly), rx: r(state.rx), ry: r(state.ry), drive: state.drive, turn: state.turn });
+    }, 33);
+  }
+
+  const q = new URLSearchParams(location.search).get('room');
+  $('joinBtn').addEventListener('click', () => {
+    const v = $('roomIn').value.trim();
+    if (!/^\d{4}$/.test(v)) { $('joinMsg').textContent = '房號是 4 位數字'; return; }
+    connect(v);
+  });
+  if (q && /^\d{4}$/.test(q)) { $('roomIn').value = q; connect(q); }
+})();
+</script>
+</body>
+</html>

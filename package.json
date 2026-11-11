@@ -1,0 +1,15 @@
+{
+  "name": "hackathon-excavator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.14.0",
+    "qrcode": "^1.5.4",
+    "three": "^0.170.0",
+    "ws": "^8.18.0"
+  }
+}

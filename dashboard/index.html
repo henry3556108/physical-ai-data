@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>遙測數據後台</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0f1012; --surface-1:#1a1a19; --surface-2:#222220; --line:#2e2e2b;
+    --text-primary:#f0efec; --text-secondary:#c3c2b7; --text-muted:#8f8e86;
+    --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70;
+    --grid:#2a2a28; --accent:#f5b800; --critical:#e66767; --good:#3ddc84;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text-primary); font-family:system-ui,-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif; font-size:14px; }
+  header { display:flex; align-items:center; gap:14px; padding:14px 20px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  header h1 em { color:var(--accent); font-style:normal; }
+  .live { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); }
+  .live i { width:8px; height:8px; border-radius:50%; background:var(--text-muted); }
+  .live.on i { background:var(--good); animation:blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity:.3; } }
+  header .sp { flex:1; }
+  a.btn, button.btn { display:inline-block; border:1px solid var(--line); background:var(--surface-2); color:var(--text-primary); text-decoration:none; padding:7px 12px; border-radius:8px; font-size:13px; cursor:pointer; font-family:inherit; }
+  a.btn.primary { background:var(--accent); color:#111; border-color:var(--accent); font-weight:700; }
+  main { padding:16px 20px 40px; display:grid; gap:14px; grid-template-columns:repeat(12,1fr); max-width:1600px; margin:0 auto; }
+  .card { background:var(--surface-1); border:1px solid var(--line); border-radius:12px; padding:14px 16px; min-width:0; }
+  .card h2 { font-size:14px; margin:0 0 2px; font-weight:600; }
+  .card .desc { font-size:12px; color:var(--text-muted); margin:0 0 10px; }
+  .kpi { grid-column:span 3; }
+  .kpi .v { font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .kpi .s { color:var(--text-muted); font-size:12px; }
+  .c8 { grid-column:span 8; } .c4 { grid-column:span 4; } .c6 { grid-column:span 6; } .c12 { grid-column:span 12; }
+  @media (max-width:1000px) { .kpi { grid-column:span 6; } .c8,.c4,.c6 { grid-column:span 12; } }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+  .seg button { border:1px solid var(--line); background:transparent; color:var(--text-secondary); padding:5px 10px; font-size:12px; cursor:pointer; font-family:inherit; }
+  .seg button:first-child { border-radius:8px 0 0 8px; } .seg button:last-child { border-radius:0 8px 8px 0; }
+  .seg button + button { border-left:0; }
+  .seg button.on { background:var(--surface-2); color:var(--text-primary); }
+  .legend { display:flex; gap:14px; font-size:12px; color:var(--text-secondary); }
+  .legend span::before { content:""; display:inline-block; width:14px; height:2px; vertical-align:middle; margin-right:6px; background:var(--c); }
+  .legend span.dash::before { background:repeating-linear-gradient(90deg,var(--c) 0 4px,transparent 4px 7px); }
+  .chart { position:relative; height:200px; }
+  .chart canvas { position:absolute; inset:0; width:100%; height:100%; }
+  .tip { position:absolute; pointer-events:none; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:6px 9px; font-size:12px; white-space:nowrap; display:none; z-index:2; font-variant-numeric:tabular-nums; }
+  .tip b { color:var(--text-primary); }
+  .tip .k { display:inline-block; width:10px; height:2px; vertical-align:middle; margin-right:5px; }
+  #events { height:300px; overflow:auto; font-size:12px; font-variant-numeric:tabular-nums; }
+  #events div { padding:5px 0; border-bottom:1px solid var(--grid); display:flex; gap:10px; }
+  #events time { color:var(--text-muted); width:48px; flex:none; }
+  #events .crit { color:var(--critical); }
+  table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
+  th { text-align:left; color:var(--text-muted); font-weight:500; font-size:12px; padding:6px 6px; border-bottom:1px solid var(--line); }
+  td { padding:7px 6px; border-bottom:1px solid var(--grid); }
+  tr.sel td { background:var(--surface-2); }
+  tbody tr { cursor:pointer; }
+  td.num, th.num { text-align:right; }
+  .stars { color:var(--accent); letter-spacing:1px; }
+  .muted { color:var(--text-muted); }
+  .tag { font-size:11px; padding:2px 7px; border-radius:999px; border:1px solid var(--line); color:var(--text-secondary); }
+  .tag.live { border-color:var(--good); color:var(--good); }
+  #mode { font-size:12px; color:var(--text-secondary); }
+  .scroll { max-height:360px; overflow:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>遠端都更挖土機 · <em>遙測數據後台</em></h1>
+  <span class="live" id="liveBadge"><i></i><span id="liveText">連線中</span></span>
+  <span id="mode"></span>
+  <span class="sp"></span>
+  <a class="btn" href="/game/" target="_blank">開遊戲 ↗</a>
+  <a class="btn primary" href="/api/export/all.json">匯出全部數據 JSON</a>
+</header>
+<main>
+  <div class="card kpi"><h2>累積場次</h2><div class="v" id="kSessions">0</div><div class="s" id="kSessionsS">　</div></div>
+  <div class="card kpi"><h2>累積遙測樣本</h2><div class="v" id="kSamples">0</div><div class="s">每秒 20 筆，含輸入、關節角度、挖斗軌跡</div></div>
+  <div class="card kpi"><h2>累積操作時間</h2><div class="v" id="kMinutes">0 分</div><div class="s">真人操作重機的時數，未來的 AI 訓練資料</div></div>
+  <div class="card kpi"><h2>目前場次</h2><div class="v" id="kCurrent">—</div><div class="s" id="kCurrentS">等待玩家開始</div></div>
+
+  <div class="card c8">
+    <div class="row" style="justify-content:space-between">
+      <div><h2>指令與實際動作的落差</h2><p class="desc" style="margin:0">理想軌跡是沒有延遲、沒有液壓遲滯時的關節角度。兩條線差得越遠，越難遠端操作。</p></div>
+      <div class="seg" id="jointSeg"><button data-j="Boom" class="on">大臂</button><button data-j="Arm">小臂</button><button data-j="Bucket">挖斗</button><button data-j="Swing">迴轉</button></div>
+    </div>
+    <div class="legend" style="margin:6px 0"><span class="dash" style="--c:var(--series-1)">理想軌跡（°）</span><span style="--c:var(--series-2)">實際角度（°）</span></div>
+    <div class="chart" id="chAngle"></div>
+    <div class="legend" style="margin:12px 0 6px"><span class="dash" style="--c:var(--series-1)">玩家輸入</span><span style="--c:var(--series-2)">延遲後送達機具</span><span class="muted" id="latNote"></span></div>
+    <div class="chart" id="chInput" style="height:140px"></div>
+  </div>
+  <div class="card c4">
+    <h2>挖斗軌跡（俯視）</h2>
+    <p class="desc">紅色是目標建築、藍灰是鄰屋、虛線是卡車車斗。每一點都是一筆可以拿來訓練的位置資料。</p>
+    <div class="chart" id="chTrack" style="height:360px"></div>
+  </div>
+
+  <div class="card c8">
+    <h2>液壓負載</h2>
+    <p class="desc">挖斗受到的接觸力換算成 0–100%，高峰就是打擊瞬間</p>
+    <div class="chart" id="chLoad" style="height:140px"></div>
+  </div>
+  <div class="card c4">
+    <h2>事件流</h2>
+    <p class="desc">撞擊、拆除進度、寶物、附帶損害、延遲調整</p>
+    <div id="events"></div>
+  </div>
+
+  <div class="card c6">
+    <h2>排行榜</h2>
+    <p class="desc">完成拆除的場次，依分數排序</p>
+    <div class="scroll"><table><thead><tr><th>#</th><th>玩家</th><th class="num">分數</th><th>星等</th><th class="num">用時</th><th class="num">延遲</th></tr></thead><tbody id="lb"></tbody></table></div>
+  </div>
+  <div class="card c6">
+    <h2>所有場次</h2>
+    <p class="desc">點一列可以載入那一局的完整數據；右邊可以匯出</p>
+    <div class="scroll"><table><thead><tr><th>開始</th><th>玩家</th><th class="num">樣本</th><th class="num">延遲</th><th>結果</th><th>匯出</th></tr></thead><tbody id="sessTable"></tbody></table></div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C = { s1: css('--series-1'), s2: css('--series-2'), grid: css('--grid'), muted: css('--text-muted'), sec: css('--text-secondary'), surface: css('--surface-1'), crit: css('--critical'), accent: css('--accent') };
+  const WINDOW = 20; // 即時模式顯示最近 20 秒
+
+  // ---------- 狀態 ----------
+  let sessions = [], leaderboard = [];
+  let current = null;        // 目前顯示的 session id
+  let live = true;           // 跟隨最新場次
+  let samples = [], events = [];
+  let joint = 'Boom';
+
+  // ---------- 折線圖（canvas，含十字線 tooltip） ----------
+  function makeChart(el, cfg) {
+    const cv = document.createElement('canvas'); el.appendChild(cv);
+    const tip = document.createElement('div'); tip.className = 'tip'; el.appendChild(tip);
+    const ctx = cv.getContext('2d');
+    const chart = { cfg, hoverX: null, data: [] };
+    const pad = { l: 40, r: 12, t: 8, b: 22 };
+    function size() {
+      const r = el.getBoundingClientRect(), d = devicePixelRatio || 1;
+      cv.width = r.width * d; cv.height = r.height * d; ctx.setTransform(d, 0, 0, d, 0, 0);
+      return r;
+    }
+    chart.draw = () => {
+      const r = size(), W = r.width, H = r.height;
+      ctx.clearRect(0, 0, W, H);
+      const rows = chart.data;
+      if (!rows.length) {
+        ctx.fillStyle = C.muted; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+        ctx.fillText('等待數據…', W / 2, H / 2); tip.style.display = 'none'; return;
+      }
+      const t1 = rows[rows.length - 1].t, t0 = cfg.window ? Math.max(rows[0].t, t1 - cfg.window) : rows[0].t;
+      const vis = rows.filter(d => d.t >= t0);
+      let lo = cfg.min, hi = cfg.max;
+      if (lo == null || hi == null) {
+        lo = Infinity; hi = -Infinity;
+        for (const d of vis) for (const s of cfg.series) { const v = d[s.key]; if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
+        const m = Math.max(5, (hi - lo) * 0.1); lo -= m; hi += m;
+      }
+      const X = t => pad.l + (t - t0) / Math.max(0.001, t1 - t0) * (W - pad.l - pad.r);
+      const Y = v => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+      // 格線
+      ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.fillStyle = C.muted; ctx.font = '11px system-ui'; ctx.textAlign = 'right';
+      for (let i = 0; i <= 4; i++) {
+        const v = lo + (hi - lo) * i / 4, y = Y(v);
+        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+        ctx.fillText(cfg.fmt ? cfg.fmt(v) : Math.round(v), pad.l - 6, y + 4);
+      }
+      ctx.textAlign = 'center';
+      const span = t1 - t0, step = span > 120 ? 30 : span > 40 ? 10 : 5;
+      for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) ctx.fillText(t + 's', X(t), H - 6);
+      // 線
+      for (const s of cfg.series) {
+        ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.setLineDash(s.dash ? [5, 4] : []);
+        ctx.lineJoin = 'round'; ctx.beginPath();
+        let first = true;
+        for (const d of vis) { const v = d[s.key]; if (v == null) continue; const x = X(d.t), y = Y(v); first ? ctx.moveTo(x, y) : ctx.lineTo(x, y); first = false; }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      // 十字線 + tooltip
+      if (chart.hoverX != null && chart.hoverX >= pad.l) {
+        const t = t0 + (chart.hoverX - pad.l) / (W - pad.l - pad.r) * (t1 - t0);
+        let best = vis[0]; for (const d of vis) if (Math.abs(d.t - t) < Math.abs(best.t - t)) best = d;
+        const x = X(best.t);
+        ctx.strokeStyle = C.sec; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, H - pad.b); ctx.stroke();
+        for (const s of cfg.series) {
+          const v = best[s.key]; if (v == null) continue;
+          ctx.fillStyle = s.color; ctx.strokeStyle = C.surface; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(x, Y(v), 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+        tip.innerHTML = `<div class="muted">${best.t.toFixed(2)} s</div>` + cfg.series.map(s => `<div><span class="k" style="background:${s.color}"></span>${s.label}　<b>${best[s.key] == null ? '—' : (cfg.fmt ? cfg.fmt(best[s.key]) : best[s.key].toFixed(1))}</b></div>`).join('');
+        tip.style.display = 'block';
+        const tw = tip.offsetWidth;
+        tip.style.left = (x + 12 + tw > W ? x - tw - 12 : x + 12) + 'px'; tip.style.top = '6px';
+      } else tip.style.display = 'none';
+    };
+    el.addEventListener('pointermove', e => { chart.hoverX = e.clientX - el.getBoundingClientRect().left; chart.draw(); });
+    el.addEventListener('pointerleave', () => { chart.hoverX = null; chart.draw(); });
+    return chart;
+  }
+
+  const angleChart = makeChart($('chAngle'), { window: WINDOW, series: [
+    { key: 'ideal', label: '理想軌跡', color: C.s1, dash: true }, { key: 'actual', label: '實際角度', color: C.s2 }] });
+  const inputChart = makeChart($('chInput'), { window: WINDOW, min: -1.1, max: 1.1, fmt: v => v.toFixed(1), series: [
+    { key: 'raw', label: '玩家輸入', color: C.s1, dash: true }, { key: 'del', label: '送達機具', color: C.s2 }] });
+  const loadChart = makeChart($('chLoad'), { window: WINDOW, min: 0, max: 1, fmt: v => Math.round(v * 100) + '%', series: [
+    { key: 'load', label: '液壓負載', color: C.s1 }] });
+
+  // ---------- 俯視軌跡 ----------
+  const trackEl = $('chTrack'), tcv = document.createElement('canvas'); trackEl.appendChild(tcv);
+  const tctx = tcv.getContext('2d');
+  function drawTrack() {
+    const r = trackEl.getBoundingClientRect(), d = devicePixelRatio || 1;
+    tcv.width = r.width * d; tcv.height = r.height * d; tctx.setTransform(d, 0, 0, d, 0, 0);
+    const W = r.width, H = r.height;
+    tctx.clearRect(0, 0, W, H);
+    // 世界座標 x ∈ [-13, 13]，z ∈ [-3, 17]；畫面右邊 = 駕駛艙看出去的右邊（世界 -x）
+    const xr = [-13, 13], zr = [-3, 17];
+    const sc = Math.min(W / (xr[1] - xr[0]), H / (zr[1] - zr[0]));
+    const ox = (W - sc * (xr[1] - xr[0])) / 2, oy = (H - sc * (zr[1] - zr[0])) / 2;
+    const P = (x, z) => [ox + (xr[1] - x) * sc, oy + (zr[1] - z) * sc];
+    const rect = (cx, cz, w, dd, stroke, fill, dash) => {
+      const [x1, y1] = P(cx + w / 2, cz + dd / 2), [x2, y2] = P(cx - w / 2, cz - dd / 2);
+      tctx.setLineDash(dash ? [4, 4] : []); tctx.lineWidth = 1.5;
+      if (fill) { tctx.fillStyle = fill; tctx.fillRect(x1, y1, x2 - x1, y2 - y1); }
+      tctx.strokeStyle = stroke; tctx.strokeRect(x1, y1, x2 - x1, y2 - y1); tctx.setLineDash([]);
+    };
+    tctx.strokeStyle = C.grid; tctx.lineWidth = 1;
+    for (let x = -12; x <= 12; x += 4) { const [a, b] = P(x, zr[0]), [c, e] = P(x, zr[1]); tctx.beginPath(); tctx.moveTo(a, b); tctx.lineTo(c, e); tctx.stroke(); }
+    for (let z = -2; z <= 16; z += 4) { const [a, b] = P(xr[0], z), [c, e] = P(xr[1], z); tctx.beginPath(); tctx.moveTo(a, b); tctx.lineTo(c, e); tctx.stroke(); }
+    rect(0, 11, 6, 4.8, '#b5654a', 'rgba(181,101,74,.18)');
+    rect(-8.6, 11, 4.2, 4.2, '#8fa3b8', 'rgba(143,163,184,.15)');
+    rect(8.2, 5.5, 3, 4.6, C.accent, null, true);
+    tctx.fillStyle = C.muted; tctx.font = '11px system-ui'; tctx.textAlign = 'center';
+    let [lx, ly] = P(0, 14.2); tctx.fillText('目標建築', lx, ly);
+    [lx, ly] = P(-8.6, 14.2); tctx.fillText('鄰屋', lx, ly);
+    [lx, ly] = P(8.2, 8.6); tctx.fillText('卡車', lx, ly);
+    const vis = live ? samples.slice(-WINDOW * 20 * 3) : samples;
+    if (vis.length) {
+      tctx.strokeStyle = C.s1; tctx.lineWidth = 2; tctx.globalAlpha = 0.85; tctx.beginPath();
+      vis.forEach((s, i) => { const [x, y] = P(s.tipX, s.tipZ); i ? tctx.lineTo(x, y) : tctx.moveTo(x, y); }); tctx.stroke();
+      tctx.globalAlpha = 1;
+      const s = vis[vis.length - 1];
+      const [bx, by] = P(s.baseX, s.baseZ);
+      tctx.fillStyle = C.accent; tctx.strokeStyle = C.surface; tctx.lineWidth = 2;
+      tctx.beginPath(); tctx.arc(bx, by, 7, 0, Math.PI * 2); tctx.fill(); tctx.stroke();
+      const [tx, ty] = P(s.tipX, s.tipZ);
+      tctx.fillStyle = C.s1; tctx.beginPath(); tctx.arc(tx, ty, 5, 0, Math.PI * 2); tctx.fill(); tctx.stroke();
+      tctx.fillStyle = C.sec; tctx.textAlign = 'left'; tctx.fillText('機身', bx + 10, by + 4); tctx.fillText(`挖斗 高 ${s.tipY.toFixed(1)}m`, tx + 9, ty - 6);
+    } else {
+      tctx.fillStyle = C.muted; tctx.fillText('等待數據…', W / 2, H - 14);
+    }
+  }
+
+  // ---------- 繪製 ----------
+  let raf = 0;
+  function redraw() {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      angleChart.data = samples.map(s => ({ t: s.t, ideal: s['tgt' + joint], actual: s[joint.toLowerCase()] }));
+      inputChart.data = samples.map(s => ({ t: s.t, raw: s['in' + joint], del: s['d' + joint] }));
+      loadChart.data = samples.map(s => ({ t: s.t, load: s.load }));
+      angleChart.cfg.window = inputChart.cfg.window = loadChart.cfg.window = live ? WINDOW : 0;
+      angleChart.draw(); inputChart.draw(); loadChart.draw(); drawTrack();
+      const last = samples[samples.length - 1];
+      $('latNote').textContent = last && last.latencyMs ? `目前模擬延遲 ${last.latencyMs} ms` : '';
+    });
+  }
+  addEventListener('resize', redraw);
+  document.querySelectorAll('#jointSeg button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('#jointSeg button').forEach(x => x.classList.toggle('on', x === b));
+    joint = b.dataset.j; redraw();
+  }));
+
+  const EV = {
+    start: e => `開始　玩家 ${esc(e.player || '')}，延遲 ${e.latencyMs} ms`,
+    impact: e => `強力撞擊 ${Math.round(e.kN)} kN`,
+    demolition: e => `拆除進度 ${Math.round(e.ratio * 100)}%`,
+    target_reached: () => '拆除達標',
+    collateral: e => `⚠ 附帶損害：鄰屋 ${e.count} 塊`,
+    treasure: e => `寶物入袋：${esc(e.name)} +${e.pts}`,
+    latency_change: e => `延遲調整為 ${e.value} ms`,
+    pad_joined: () => '手機遙控器連線', pad_left: () => '手機遙控器斷線',
+    finish: e => `結束　${e.completed ? '完成' : '未完成'}，${e.score} 分 ${'★'.repeat(e.stars)}`,
+  };
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  function renderEvents() {
+    $('events').innerHTML = events.slice(-200).reverse().map(e => {
+      const f = EV[e.type]; const crit = e.type === 'collateral';
+      return `<div class="${crit ? 'crit' : ''}"><time>${e.t.toFixed(1)}s</time><span>${f ? f(e) : esc(e.type)}</span></div>`;
+    }).join('') || '<div class="muted">尚無事件</div>';
+  }
+
+  const fmtT = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  function renderTables() {
+    const tot = sessions.reduce((a, s) => a + (s.samples || 0), 0);
+    $('kSessions').textContent = sessions.length.toLocaleString();
+    $('kSessionsS').textContent = `完成 ${sessions.filter(s => s.result && s.result.completed).length} 場`;
+    $('kSamples').textContent = tot.toLocaleString();
+    $('kMinutes').textContent = (tot / 20 / 60).toFixed(1) + ' 分';
+    $('lb').innerHTML = leaderboard.map((r, i) => `<tr data-id="${r.id}"><td>${i + 1}</td><td>${esc(r.player)}</td><td class="num">${r.score.toLocaleString()}</td><td class="stars">${'★'.repeat(r.stars)}<span class="muted">${'★'.repeat(3 - r.stars)}</span></td><td class="num">${fmtT(r.time)}</td><td class="num">${r.latencyMs} ms</td></tr>`).join('') || '<tr><td colspan="6" class="muted">還沒有人完成</td></tr>';
+    $('sessTable').innerHTML = sessions.slice(0, 100).map(s => {
+      const res = s.result ? (s.result.completed ? `<span class="stars">${'★'.repeat(s.result.stars)}</span> ${s.result.score}` : '<span class="muted">未完成</span>') : '<span class="tag live">進行中</span>';
+      return `<tr data-id="${s.id}" class="${s.id === current ? 'sel' : ''}"><td>${new Date(s.startedAt).toLocaleTimeString('zh-TW', { hour12: false })}</td><td>${esc(s.player)}</td><td class="num">${(s.samples || 0).toLocaleString()}</td><td class="num">${s.latencyMs} ms</td><td>${res}</td><td><a class="btn" href="/api/sessions/${s.id}.csv" onclick="event.stopPropagation()">CSV</a> <a class="btn" href="/api/sessions/${s.id}.json" onclick="event.stopPropagation()">JSON</a></td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="muted">還沒有場次</td></tr>';
+    const cs = sessions.find(s => s.id === current);
+    $('kCurrent').textContent = cs ? cs.player : '—';
+    $('kCurrentS').textContent = cs ? (cs.result ? `已結束 · ${cs.result.score} 分` : `進行中 · ${cs.latencyMs} ms 延遲`) : '等待玩家開始';
+    $('mode').innerHTML = live ? '即時模式：自動跟隨最新場次' : `檢視歷史場次 · <a href="#" id="backLive" style="color:var(--accent)">回到即時</a>`;
+    const bl = $('backLive'); if (bl) bl.onclick = e => { e.preventDefault(); live = true; const latest = sessions[0]; if (latest) loadSession(latest.id, true); else renderTables(); };
+  }
+  for (const tb of ['sessTable', 'lb']) $(tb).addEventListener('click', e => {
+    const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+    live = false; loadSession(tr.dataset.id, false);
+  });
+
+  async function loadSession(id, asLive) {
+    current = id;
+    try {
+      const r = await fetch(`/api/sessions/${id}.json`); const j = await r.json();
+      samples = j.samples || []; events = j.events || [];
+    } catch { samples = []; events = []; }
+    live = asLive; renderEvents(); renderTables(); redraw();
+  }
+
+  async function refreshLists() {
+    try {
+      [sessions, leaderboard] = await Promise.all([fetch('/api/sessions').then(r => r.json()), fetch('/api/leaderboard').then(r => r.json())]);
+    } catch { /* 下次再試 */ }
+    renderTables();
+  }
+
+  // ---------- SSE ----------
+  function connect() {
+    const es = new EventSource('/api/stream');
+    es.onopen = () => { $('liveBadge').classList.add('on'); $('liveText').textContent = '即時連線'; };
+    es.onerror = () => { $('liveBadge').classList.remove('on'); $('liveText').textContent = '重新連線中'; };
+    es.addEventListener('session', ev => {
+      const s = JSON.parse(ev.data);
+      sessions = [s, ...sessions.filter(x => x.id !== s.id)];
+      if (live) { current = s.id; samples = []; events = []; renderEvents(); redraw(); }
+      renderTables();
+    });
+    es.addEventListener('telemetry', ev => {
+      const m = JSON.parse(ev.data);
+      const s = sessions.find(x => x.id === m.sessionId);
+      if (s) { s.samples = (s.samples || 0) + m.samples.length; s.latencyMs = m.latencyMs; }
+      if (live && current !== m.sessionId) { current = m.sessionId; samples = []; events = []; }
+      if (current === m.sessionId) {
+        samples.push(...m.samples); events.push(...m.events);
+        if (samples.length > 20 * 60 * 10) samples.splice(0, samples.length - 20 * 60 * 10);
+        if (m.events.length) renderEvents();
+        redraw();
+      }
+      renderTables();
+    });
+    es.addEventListener('sessionEnd', ev => { const s = JSON.parse(ev.data); sessions = sessions.map(x => x.id === s.id ? s : x); renderTables(); });
+    es.addEventListener('leaderboard', ev => { leaderboard = JSON.parse(ev.data); renderTables(); });
+  }
+
+  (async () => {
+    await refreshLists();
+    const active = sessions.find(s => !s.result) || sessions[0];
+    if (active) await loadSession(active.id, true); else { renderEvents(); redraw(); }
+    connect();
+    setInterval(refreshLists, 30000);
+  })();
+})();
+</script>
+</body>
+</html>
