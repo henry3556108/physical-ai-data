@@ -452,7 +452,7 @@ const MACHINES = {
       swing:  { label: 'Swing', unit: 'deg', min: -Infinity, max: Infinity, speed: 0.7, accel: 3.2, dir: +1 },
       boom:   { label: 'Boom', unit: 'deg', min: -1.05, max: 0.45, speed: 0.55, accel: 3.2, dir: +1 },
       arm:    { label: 'Arm', unit: 'deg', min: 0.35, max: 2.7, speed: 0.75, accel: 3.2, dir: -1 },
-      bucket: { label: 'Bucket', unit: 'deg', min: -0.7, max: 2.4, speed: 1.1, accel: 3.2, dir: +1 },
+      bucket: { label: 'Bucket', unit: 'deg', min: -0.7, max: 2.4, speed: 1.6, accel: 4.5, dir: +1 },
     },
     pose: { swing: 0, boom: -0.85, arm: 1.6, bucket: 1.2 },
     drive: { speed: 1.6, turn: 0.5 },
@@ -799,7 +799,7 @@ function buildExcavation() {
     const c = world.createCollider(RAPIER.ColliderDesc.roundCuboid(h[0] - 0.04, h[1] - 0.04, h[2] - 0.04, 0.04).setMass(CLOD_KG).setFriction(0.95).setRestitution(0), body);
     colliderTag.set(c.handle, 'soil');
     mesh.setColorAt(i, col.setHex(pal[(Math.random() * pal.length) | 0]));
-    level.clods.push({ body, origin: new THREE.Vector3(x, y, z), size: h.map(v => v * 1.18), idx: i, moved: false, carried: false, spilled: false, truck: -1, grip: null });
+    level.clods.push({ body, origin: new THREE.Vector3(x, y, z), size: h.map(v => v * 1.18), idx: i, moved: false, carried: false, spilled: false, truck: -1, grip: null, col: c });
   });
   scene.add(mesh); level.clodMesh = mesh;
   groundRing(heap.x, heap.z, R + 0.6, 0xf5b800);
@@ -1294,12 +1294,41 @@ const _inv = new THREE.Matrix4();
 // it is released as soon as the operator opens the bucket to dump
 const _cl = new THREE.Vector3();
 const bucketAngle = () => game.joints.boom + game.joints.arm + game.joints.bucket;
+const _mouth = new THREE.Vector3(), _bq = new THREE.Quaternion();
+const PUSH = 3, SLICK = 0.15, MOUTH = 0.5, FLING = 0.8;   // pour assist: push (m/s²), friction while pouring, mouth tilt to pour, max kick (m/s)
+const _pv = new THREE.Vector3(), _pvPrev = new THREE.Vector3();
 function excavatorPreStep() {
   if (rig.tool !== 'bucket' || !level.clods.length) return;
-  const open = bucketAngle() < 1.75;
+  // Where the bucket mouth points in the world (the bucket opens toward local -Y)
+  rig.toolPivot.getWorldQuaternion(_bq);
+  _mouth.set(0, -1, 0).applyQuaternion(_bq);
+  rig.toolPivot.getWorldPosition(_pv);
+  const pvx = (_pv.x - _pvPrev.x) / DT, pvz = (_pv.z - _pvPrev.z) / DT;
+  _pvPrev.copy(_pv);
+  // Pouring: the operator is opening the bucket and the mouth has tipped over far enough for loose soil to slide.
+  // Soil is let go at once, made slippery and eased out of the mouth, so a quick flick of the stick empties the bucket.
+  // (Also when the bucket is held tipped up in the air; never while it digs, where an open bucket must keep its soil.)
+  const pour = _mouth.y < MOUTH && (game.vel.bucket < -0.12 || (_mouth.y < 0.2 && _pv.y > 3.0));
+  if (bucketAngle() < 1.75) for (const cl of level.clods) cl.grip = null;
   for (const cl of level.clods) {
+    if (pour && cl.inBucket) {
+      // Soil slides off the tipped bucket: let go of the grip and make it slippery
+      cl.grip = null;
+      if (!cl.slick) { cl.col.setFriction(SLICK); cl.slick = true; }
+      cl.slickT = game.t;
+    }
+    if (cl.slick) {
+      if (game.t - cl.slickT > 0.3) { cl.col.setFriction(0.95); cl.slick = false; }
+      else {
+        // Ease it down out of the mouth. Clods packed in the bucket push each other apart once let go and the
+        // sweeping bucket shoves them, so cap that kick: soil pours out instead of being shot over the truck
+        const v = cl.body.linvel(), k = cl.inBucket ? Math.min(1, (MOUTH - _mouth.y) * 1.5) * PUSH * DT : 0;
+        const lim = (a, b) => b + clamp(a - b, -FLING, FLING);
+        cl.body.setLinvel({ x: lim(v.x, pvx), y: Math.min(v.y, 0.3) - k, z: lim(v.z, pvz) }, true);
+        continue;
+      }
+    }
     if (!cl.grip) continue;
-    if (open) { cl.grip = null; continue; }
     _cl.copy(cl.grip).applyMatrix4(rig.toolPivot.matrixWorld);
     const t = cl.body.translation();
     cl.body.setLinvel({ x: (_cl.x - t.x) / DT, y: (_cl.y - t.y) / DT, z: (_cl.z - t.z) / DT }, true);
@@ -1348,13 +1377,15 @@ function excavatorPostStep(contacts) {
   let payload = 0;
   if (level.clods.length && rig.tool === 'bucket') {
     _inv.copy(rig.toolPivot.matrixWorld).invert();
-    const grip = bucketAngle() > 1.95;
+    const grip = bucketAngle() > 1.95 && !(game.vel.bucket < -0.12 && _mouth.y < MOUTH);
     for (const cl of level.clods) {
+      cl.inBucket = false;
       if (cl.body.isSleeping()) { cl.grip = null; continue; }
       const t = cl.body.translation();
       _v.set(t.x, t.y, t.z).applyMatrix4(_inv);
       if (Math.abs(_v.x) < 0.62 && _v.y > -0.75 && _v.y < 0.15 && _v.z > 0 && _v.z < 1.5) {
         payload += CLOD_KG;
+        cl.inBucket = true;
         if (t.y > 1.2) cl.carried = true;
         if (!cl.grip && grip) cl.grip = _v.clone();
       } else cl.grip = null;
