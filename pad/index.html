@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0d0f12">
-<title>Crane Controller</title>
+<title>Machine Controller</title>
 <style>
   :root { --yellow:#f5b800; --bg:#0d0f12; --panel:#161a20; --line:#2a3038; --text:#e9edf2; --muted:#8d97a5; --red:#ff4d4d; --green:#3ddc84; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; }
@@ -41,7 +41,7 @@
 </head>
 <body>
 <div id="join">
-  <div style="font-size:26px;font-weight:800">🏗️ Crane <span style="color:var(--yellow)">Controller</span></div>
+  <div style="font-size:26px;font-weight:800">🕹️ Machine <span style="color:var(--yellow)">Controller</span></div>
   <div class="muted">Enter the 4-digit room code shown on the game screen</div>
   <input id="roomIn" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
   <button class="btn" id="joinBtn">Connect</button>
@@ -54,9 +54,10 @@
   <div class="top"><span><span class="dot" id="dot"></span><span id="conn">Connecting</span></span><span id="lat"></span></div>
   <div class="stick" id="stickL">
     <span class="stickName">Left stick</span>
-    <div class="ring"><div class="knob"></div><span class="lbl t">Lower</span><span class="lbl b">Hoist</span><span class="lbl l">Swing L</span><span class="lbl r">Swing R</span></div>
+    <div class="ring"><div class="knob"></div><span class="lbl t" id="lL0">Lower</span><span class="lbl b" id="lL1">Hoist</span><span class="lbl l" id="lL2">Swing L</span><span class="lbl r" id="lL3">Swing R</span></div>
   </div>
   <div class="mid">
+    <div id="mName" style="font-size:13px;font-weight:700;color:var(--yellow);text-align:center"></div>
     <div id="stat">—</div>
     <div class="tracks">
       <span></span><div class="tb" data-d="1">▲</div><span></span>
@@ -64,11 +65,11 @@
     </div>
     <div class="muted" style="font-size:11px">Tracks: forward / reverse / turn</div>
     <button class="btn" id="mainBtn">Start</button>
-    <div style="display:flex;gap:6px"><button class="small" id="viewBtn">View</button><button class="small" id="fsBtn">Fullscreen</button></div>
+    <div style="display:flex;gap:6px"><button class="small" id="machBtn">Machine ⇄</button><button class="small" id="viewBtn">View</button><button class="small" id="fsBtn">Fullscreen</button></div>
   </div>
   <div class="stick" id="stickR">
     <span class="stickName">Right stick</span>
-    <div class="ring"><div class="knob"></div><span class="lbl t">Boom down</span><span class="lbl b">Boom up</span><span class="lbl l">Drag in</span><span class="lbl r">Steady</span></div>
+    <div class="ring"><div class="knob"></div><span class="lbl t" id="lR0">Boom down</span><span class="lbl b" id="lR1">Boom up</span><span class="lbl l" id="lR2">Drag in</span><span class="lbl r" id="lR3">Steady</span></div>
   </div>
 </div>
 
@@ -125,6 +126,8 @@
     goFull();
   });
   $('viewBtn').addEventListener('click', () => send({ t: 'btn', b: 'view' }));
+  // In the menu: cycle machines. After a run: back to the machine picker.
+  $('machBtn').addEventListener('click', () => { buzz(20); send({ t: 'btn', b: state.phase === 'result' ? 'menu' : 'machine' }); });
   $('fsBtn').addEventListener('click', goFull);
   function goFull() {
     const d = document.documentElement;
@@ -137,6 +140,7 @@
   function setPhase(p) {
     state.phase = p;
     $('mainBtn').textContent = p === 'menu' ? 'Start' : p === 'play' ? 'Finish' : 'Play again';
+    $('machBtn').style.display = p === 'play' ? 'none' : '';
   }
 
   // ---------- 連線 ----------
@@ -161,7 +165,9 @@
         buzz(Math.min(400, m.ms || 60));
       } else if (m.t === 'state') {
         if (m.phase) setPhase(m.phase);
-        if (m.phase === 'play' && m.demo != null) $('stat').textContent = `Demolished ${m.demo}% · ${m.time}s`;
+        if (m.labels) for (const side of ['L', 'R']) (m.labels[side] || []).forEach((t, i) => { const el = $('l' + side + i); if (el && el.textContent !== t) el.textContent = t; });
+        if (m.machineName) $('mName').textContent = m.machineName;
+        if (m.phase === 'play' && m.demo != null) $('stat').textContent = `${m.progress || 'Progress'} ${m.demo}% · ${m.time}s`;
         else if (m.phase === 'result') $('stat').textContent = m.score != null ? `Score ${m.score} · ${'★'.repeat(m.stars || 0)}` : 'Scoring…';
         else if (m.phase === 'menu') $('stat').textContent = 'Tap Start to begin';
         if (m.latency != null) $('lat').textContent = m.latency ? `Simulated latency ${m.latency}ms` : '';

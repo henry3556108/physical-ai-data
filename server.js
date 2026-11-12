@@ -90,10 +90,15 @@ async function readSessionLines(id) {
   return { samples, events };
 }
 
-const CSV_COLS = ['t', 'src', 'latencyMs', 'inSwing', 'inBoom', 'inHoist', 'inDrag', 'inTrackL', 'inTrackR',
-  'dSwing', 'dBoom', 'dHoist', 'dDrag', 'swing', 'boom', 'hoist', 'tgtSwing', 'tgtBoom', 'tgtHoist',
-  'tipX', 'tipY', 'tipZ', 'ballX', 'ballY', 'ballZ', 'ballVX', 'ballVY', 'ballVZ',
-  'baseX', 'baseZ', 'heading', 'tensionKN', 'load', 'impulse'];
+// Union of every machine's fields; columns a machine doesn't have stay empty
+const MACHINE_IDS = ['crane', 'highreach', 'excavator'], MISSION_IDS = ['demolition', 'excavation'];
+const CSV_COLS = ['t', 'machine', 'src', 'latencyMs', 'inLX', 'inLY', 'inRX', 'inRY', 'inTrackL', 'inTrackR',
+  'inSwing', 'inBoom', 'inHoist', 'inArm', 'inBucket', 'inTool', 'inDrag',
+  'dSwing', 'dBoom', 'dHoist', 'dArm', 'dBucket', 'dTool', 'dDrag',
+  'swing', 'boom', 'hoist', 'arm', 'bucket', 'tool', 'tgtSwing', 'tgtBoom', 'tgtHoist', 'tgtArm', 'tgtBucket', 'tgtTool',
+  'tipX', 'tipY', 'tipZ', 'toolX', 'toolY', 'toolZ', 'toolSpeed', 'ballX', 'ballY', 'ballZ', 'ballVX', 'ballVY', 'ballVZ',
+  'baseX', 'baseZ', 'heading', 'tensionKN', 'payloadKg', 'load', 'impulse'];
+const pickId = (v, list, d) => list.includes(v) ? v : d;
 function toCsv(rows, cols) {
   const esc = v => v == null ? '' : (typeof v === 'number' ? String(Math.round(v * 10000) / 10000) : `"${String(v).replace(/"/g, '""')}"`);
   return cols.join(',') + '\n' + rows.map(r => cols.map(c => esc(r[c])).join(',')).join('\n') + '\n';
@@ -104,7 +109,7 @@ function leaderboard() {
     .filter(s => s.result && s.result.completed)
     .sort((a, b) => (b.result.score || 0) - (a.result.score || 0))
     .slice(0, 20)
-    .map(s => ({ id: s.id, player: s.player, score: s.result.score, stars: s.result.stars,
+    .map(s => ({ id: s.id, player: s.player, score: s.result.score, stars: s.result.stars, machine: s.machine || null, mission: s.mission || null,
       time: s.result.time, latencyMs: s.latencyMs, endedAt: s.endedAt }));
 }
 
@@ -127,6 +132,7 @@ async function api(req, res, url) {
     const b = await readJson(req);
     const id = new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + crypto.randomBytes(4).toString('hex');
     sessions[id] = { id, player: cleanName(b.player), latencyMs: Number(b.latencyMs) || 0,
+      machine: pickId(b.machine, MACHINE_IDS, 'crane'), mission: pickId(b.mission, MISSION_IDS, 'demolition'),
       startedAt: Date.now(), endedAt: null, result: null, samples: 0, events: 0,
       client: String(req.headers['user-agent'] || '').slice(0, 120) };
     saveIndex();
@@ -180,9 +186,9 @@ async function api(req, res, url) {
     const disp = n => ({ 'Content-Disposition': `attachment; filename="${n}"` });
     if (fmt === 'json') {
       return send(res, 200, JSON.stringify({ session: sessions[id], samples, events }, null, 1),
-        'application/json; charset=utf-8', disp(`crane-${id}.json`));
+        'application/json; charset=utf-8', disp(`${sessions[id].machine || 'session'}-${id}.json`));
     }
-    return send(res, 200, toCsv(samples, CSV_COLS), 'text/csv; charset=utf-8', disp(`crane-${id}.csv`));
+    return send(res, 200, toCsv(samples, CSV_COLS), 'text/csv; charset=utf-8', disp(`${sessions[id].machine || 'session'}-${id}.csv`));
   }
 
   if (p === '/api/export/all.json' && req.method === 'GET') {
