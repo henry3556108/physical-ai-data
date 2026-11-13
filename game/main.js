@@ -538,6 +538,7 @@ function createMachineBodies() {
     if (physical) for (const [hx, hy, hz, x, y, z] of shapes) {
       const c = world.createCollider(RAPIER.ColliderDesc.cuboid(hx, hy, hz).setTranslation(x, y, z).setFriction(0.9)
         .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS).setContactForceEventThreshold(2000), body);
+      if (tag === 'tool' && rig.tool === 'crusher') c.setCollisionGroups(CRUSHER_GROUPS);
       colliderTag.set(c.handle, tag);
     }
     machine.parts.push({ obj, body, tag, shapes: shapes.map(([hx, hy, hz, x, y, z]) => ({ shape: new RAPIER.Cuboid(hx, hy, hz), off: new THREE.Vector3(x, y, z) })) });
@@ -553,7 +554,7 @@ function selectMachine(id) {
 
 // ====================== Buildings (stacked wall panels + floor slabs) ======================
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
-const level = { houses: [], extraMeshes: [], clods: [], clodMesh: null, trucks: [], heap: null, layout: [] };
+const level = { houses: [], extraMeshes: [], clods: [], clodMesh: null, trucks: [], heap: null, layout: [], debris: [], debrisMesh: null };
 
 function footprintRadius(t) {
   let r = 0;
@@ -575,7 +576,7 @@ function buildBuilding(tpl, cx, cz, yaw, kind) {
       .setLinearDamping(0.05).setAngularDamping(0.15));
     const c = world.createCollider(RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2).setDensity(density).setFriction(0.6).setRestitution(0.02), body);
     colliderTag.set(c.handle, kind);
-    const piece = { group, body, collider: c, size: [w, h, d], origin: new THREE.Vector3(x, y, z), color, moved: false, broken: false, idx: 0, hitAt: -1 };
+    const piece = { group, body, collider: c, size: [w, h, d], origin: new THREE.Vector3(x, y, z), color, moved: false, broken: false, idx: 0, hitAt: -1, kind, gen: 0, density, pv: null };
     pieceByCollider.set(c.handle, piece);
     pieces.push(piece);
   };
@@ -1086,7 +1087,9 @@ function resetLevel(autoStart = false) {
   for (const h of level.houses) for (const m of Object.values(h.meshes)) { scene.remove(m); m.dispose(); }
   for (const m of level.extraMeshes) scene.remove(m);
   if (level.clodMesh) { scene.remove(level.clodMesh); level.clodMesh.dispose(); }
-  Object.assign(level, { houses: [], extraMeshes: [], clods: [], clodMesh: null, trucks: [], heap: null, layout: [] });
+  if (level.debrisMesh) { scene.remove(level.debrisMesh); level.debrisMesh.dispose(); }
+  Object.assign(level, { houses: [], extraMeshes: [], clods: [], clodMesh: null, trucks: [], heap: null, layout: [], debris: [], debrisMesh: null });
+  game.shatterQ = []; game.lastShatterSound = 0;
   if (world) world.free();
   initWorld();
   rig = RIGS[M.id];
@@ -1205,6 +1208,7 @@ function physicsStep() {
   });
   eventQueue.drainCollisionEvents(() => {});
   M.postStep(contacts);
+  if (M.mission === 'demolition') debrisPostStep();
 }
 const STRIKE_MSG = {
   boom: w => w === 'truck' ? '⚠️ Arm hit the truck! Motion stopped' : '⚠️ Boom contact! Motion stopped',
@@ -1278,11 +1282,15 @@ function breakAround(speed) {
     _pp.set(t.x - bt.x, t.y - bt.y, t.z - bt.z);
     const falloff = 1 - Math.min(1, Math.max(0, _pp.length() - BALL_R) / (BREAK_RADIUS + 1));
     _pp.normalize().multiplyScalar(0.4).add(_dir).normalize();
-    const m = piece.body.mass();
-    if (!piece.broken && falloff > 0.15) crack(piece);
-    piece.body.wakeUp();
-    piece.body.applyImpulse({ x: _pp.x * m * power * falloff, y: _pp.y * m * power * falloff * 0.5, z: _pp.z * m * power * falloff }, true);
-    piece.body.applyTorqueImpulse({ x: (Math.random() - 0.5) * m * 2, y: (Math.random() - 0.5) * m * 2, z: (Math.random() - 0.5) * m * 2 }, true);
+    // Pieces right at the impact shatter into chunks; the ones around it crack and get shoved
+    const parts = FRACTURE.hit && falloff > 0.55 && speed > BREAK_SPEED * 1.6 ? shatter(piece, { x: bt.x, y: bt.y, z: bt.z, r: BALL_R + 0.1 }) : [piece];
+    if (parts.length === 1 && !piece.broken && falloff > 0.15) crack(piece);
+    for (const part of parts) {
+      const m = part.body.mass(), f = falloff * (parts.length > 1 ? 0.6 + Math.random() * 0.6 : 1);
+      part.body.wakeUp();
+      part.body.applyImpulse({ x: _pp.x * m * power * f, y: _pp.y * m * power * f * 0.5, z: _pp.z * m * power * f }, true);
+      part.body.applyTorqueImpulse({ x: (Math.random() - 0.5) * m * 2, y: (Math.random() - 0.5) * m * 2, z: (Math.random() - 0.5) * m * 2 }, true);
+    }
   }
   if (hits.length) emitDust(_v.set(bt.x, bt.y, bt.z), 10 + hits.length * 4, 3);
 }
@@ -1344,11 +1352,17 @@ function excavatorPostStep(contacts) {
       const piece = pieceByCollider.get(c.handle);
       if (piece && rig.tool === 'crusher' && c.f > 4e4 && game.t - piece.hitAt > 0.25) {
         piece.hitAt = game.t;
-        if (!piece.broken) crack(piece);
-        piece.body.wakeUp();
-        const m = piece.body.mass(), sp = Math.max(0.5, game.toolSpeed);
+        // A bite cracks a wall that is still standing (so the floors above lose support); loose slabs and panels
+        // that have already come down get crushed into chunks
+        const parts = piece.broken && piece.moved && FRACTURE.crush ? shatter(piece) : (piece.broken || crack(piece), [piece]);
+        const sp = Math.max(0.5, game.toolSpeed);
         _dir.copy(_tipVel).normalize();
-        piece.body.applyImpulse({ x: _dir.x * m * sp * 0.8, y: _dir.y * m * sp * 0.4, z: _dir.z * m * sp * 0.8 }, true);
+        for (const part of parts) {
+          const m = part.body.mass();
+          part.hitAt = game.t;
+          part.body.wakeUp();
+          part.body.applyImpulse({ x: _dir.x * m * sp * 0.8, y: _dir.y * m * sp * 0.4, z: _dir.z * m * sp * 0.8 }, true);
+        }
         if (Math.random() < 0.5) {
           const t = piece.body.translation(); emitDust(_v.set(t.x, t.y, t.z), 6, 1.5); audioHit(0.35, 900);
         }
@@ -1409,6 +1423,135 @@ function crack(piece) {
   piece.mesh.instanceColor.needsUpdate = true;
 }
 
+// ---------- Fracture: a piece breaks into rough chunks, each its own rigid body ----------
+// Chunks keep the piece's motion, show the grey concrete core, and large chunks can break once more.
+const DEBRIS_MAX = 1400;          // chunk budget per lot (keeps the solver fast on phones)
+// Collision groups (membership << 16 | filter): the crusher reaches through loose chunks at the foot of a wall
+// instead of nibbling the rubble pile forever; chunks still collide with everything else
+const CRUSHER_GROUPS = (0x0002 << 16) | 0xffff, DEBRIS_GROUPS = (0x0004 << 16) | (0xffff & ~0x0002);
+const FRACTURE = { dv: 5.5, groundY: 2.0, hit: true, crush: true, passCrusher: true };  // dv: a sudden velocity change (m/s) this big, i.e. a hard landing, breaks a piece
+const SHATTER_MIN = 1.1;          // pieces smaller than this (m) don't break further
+const _ax = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()], _fq = new THREE.Quaternion(), _fo = new THREE.Vector3();
+const _hide = new THREE.Matrix4().makeScale(0, 0, 0), _dc = new THREE.Color(), _core = new THREE.Color(0x8d8a83);
+function debrisSlot() {
+  if (!level.debrisMesh) {
+    const m = level.debrisMesh = new THREE.InstancedMesh(unitBox, structMat, DEBRIS_MAX);
+    m.castShadow = m.receiveShadow = true;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.count = 0;
+    m.setColorAt(0, _dc.setHex(0xffffff));
+    m.frustumCulled = false;
+    scene.add(m);
+  }
+  return level.debrisMesh.count++;
+}
+// avoid: a sphere (the wrecking ball) - chunks that would start inside it are pulverised to dust instead
+function shatter(piece, avoid = null) {
+  const [w, h, d] = piece.size;
+  if (Math.max(w, h, d) < SHATTER_MIN || piece.gen >= 2) return [piece];
+  // Number of chunks along each axis: thin panels split in their plane only
+  const n = piece.size.map(v => v < 0.45 ? 1 : clamp(Math.round(v / 1.3), 1, 3));
+  const total = n[0] * n[1] * n[2];
+  if (total < 2 || (level.debrisMesh?.count || 0) + total > DEBRIS_MAX) return [piece];
+  // Rough, uneven cut lines
+  const cuts = n.map((k, a) => {
+    const c = [-piece.size[a] / 2];
+    for (let i = 1; i < k; i++) c.push(piece.size[a] * (i / k - 0.5 + (Math.random() - 0.5) * 0.3 / k));
+    c.push(piece.size[a] / 2);
+    return c;
+  });
+  const body = piece.body, t = body.translation(), r = body.rotation(), lv = body.linvel(), av = body.angvel();
+  _fq.set(r.x, r.y, r.z, r.w);
+  const frags = [];
+  for (let i = 0; i < n[0]; i++) for (let j = 0; j < n[1]; j++) for (let k = 0; k < n[2]; k++) {
+    const sz = [cuts[0][i + 1] - cuts[0][i], cuts[1][j + 1] - cuts[1][j], cuts[2][k + 1] - cuts[2][k]];
+    _fo.set((cuts[0][i] + cuts[0][i + 1]) / 2, (cuts[1][j] + cuts[1][j + 1]) / 2, (cuts[2][k] + cuts[2][k + 1]) / 2).applyQuaternion(_fq);
+    // Shrink a little so neighbouring chunks don't start interpenetrating
+    // Crumbled edges: chunks are a bit smaller than their share, so a broken wall no longer carries the floor above
+    frags.push({ size: sz.map((v, a) => Math.max(0.08, v * 0.86 - (n[a] > 1 ? 0.04 : 0))), off: _fo.clone() });
+  }
+  if (avoid) {
+    const keep = frags.filter(f => Math.hypot(t.x + f.off.x - avoid.x, t.y + f.off.y - avoid.y, t.z + f.off.z - avoid.z) > avoid.r + Math.hypot(...f.size) / 2);
+    if (!keep.length) return [piece];
+    frags.length = 0; frags.push(...keep);
+  }
+  const out = [];
+  frags.forEach((f, i) => {
+    const x = t.x + f.off.x, y = t.y + f.off.y, z = t.z + f.off.z;
+    // Velocity of that point of the old piece (v + ω × r) plus a small burst apart
+    const vx = lv.x + av.y * f.off.z - av.z * f.off.y + f.off.x * 0.6 + (Math.random() - 0.5) * 0.6;
+    const vy = lv.y + av.z * f.off.x - av.x * f.off.z + f.off.y * 0.3 + Math.random() * 0.4;
+    const vz = lv.z + av.x * f.off.y - av.y * f.off.x + f.off.z * 0.6 + (Math.random() - 0.5) * 0.6;
+    let p;
+    if (i === 0) {
+      // The original body becomes the first chunk, so everything that refers to the piece stays valid
+      p = piece;
+      body.setTranslation({ x, y, z }, true);
+      piece.collider.setHalfExtents({ x: f.size[0] / 2, y: f.size[1] / 2, z: f.size[2] / 2 });
+      if (piece.mesh !== level.debrisMesh) {
+        piece.mesh.setMatrixAt(piece.idx, _hide); piece.mesh.instanceMatrix.needsUpdate = true;
+        piece.idx = debrisSlot(); piece.mesh = level.debrisMesh;
+      }
+    } else {
+      const b = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y, z).setRotation(r)
+        .setLinearDamping(0.05).setAngularDamping(0.2));
+      const c = world.createCollider(RAPIER.ColliderDesc.cuboid(f.size[0] / 2, f.size[1] / 2, f.size[2] / 2)
+        .setDensity(piece.density).setFriction(0.3).setRestitution(0.02), b);
+      colliderTag.set(c.handle, piece.kind);
+      p = { group: 'debris', body: b, collider: c, size: f.size, origin: piece.origin, color: piece.color, moved: true, broken: true,
+        idx: debrisSlot(), mesh: level.debrisMesh, hitAt: game.t, kind: piece.kind, gen: 0, density: piece.density, pv: null, debris: true };
+      pieceByCollider.set(c.handle, p);
+      level.debris.push(p);
+    }
+    p.size = f.size; p.gen = piece.gen + 1; p.broken = true; p.moved = true; p.pv = null;
+    p.collider.setFriction(0.3);
+    if (FRACTURE.passCrusher) p.collider.setCollisionGroups(DEBRIS_GROUPS);
+    p.body.setLinvel({ x: vx, y: vy, z: vz }, true);
+    p.body.setAngvel({ x: av.x + (Math.random() - 0.5) * 1.5, y: av.y + (Math.random() - 0.5) * 1.5, z: av.z + (Math.random() - 0.5) * 1.5 }, true);
+    // Broken faces show the grey concrete core
+    level.debrisMesh.setColorAt(p.idx, _dc.setHex(piece.color).lerp(_core, 0.25 + Math.random() * 0.45).multiplyScalar(0.8 + Math.random() * 0.15));
+    out.push(p);
+  });
+  level.debrisMesh.instanceColor.needsUpdate = true;
+  _v.set(t.x, t.y, t.z);
+  emitDust(_v, 4 + total, Math.max(w, h, d) * 0.6);
+  if (game.t - game.lastShatterSound > 0.08) { game.lastShatterSound = game.t; audioHit(Math.min(0.5, 0.15 + total * 0.03), 300 + Math.random() * 500); }
+  return out;
+}
+// Hard landings: a piece whose velocity changes abruptly (it slammed into the ground or the rubble) breaks apart
+function debrisPostStep() {
+  const q = game.shatterQ;
+  const check = p => {
+    if (p.body.isSleeping()) { p.pv = null; return; }
+    const v = p.body.linvel();
+    if (p.pv) {
+      const dv = Math.hypot(v.x - p.pv.x, v.y - p.pv.y, v.z - p.pv.z);
+      // Only pieces that fell from an upper floor and hit the ground: floors landing on the floor below stay whole so
+      // they keep crushing it (progressive collapse), and the ground-floor walls that hold the building up never shatter
+      if (dv > FRACTURE.dv && p.moved && p.gen < 2 && Math.max(...p.size) >= SHATTER_MIN) {
+        const y = p.body.translation().y;
+        if (y < FRACTURE.groundY && p.origin.y - y > 2.5) q.push(p);
+      }
+      p.pv.x = v.x; p.pv.y = v.y; p.pv.z = v.z;
+    } else p.pv = { x: v.x, y: v.y, z: v.z };
+  };
+  for (const h of level.houses) for (const p of h.pieces) check(p);
+  for (const p of level.debris) {
+    check(p);
+    // Safety net: a chunk born in a tight spot must not be shot across the site by the contact solver
+    if (!p.body.isSleeping()) {
+      const v = p.body.linvel(), sp = Math.hypot(v.x, v.y, v.z);
+      if (sp > 14) p.body.setLinvel({ x: v.x * 14 / sp, y: v.y * 14 / sp, z: v.z * 14 / sp }, true);
+    }
+  }
+  // A few per step, so a whole building collapsing doesn't stall a frame
+  for (let i = 0; i < 4 && q.length; i++) {
+    const p = q.shift();
+    if (!q.includes(p)) shatter(p);
+  }
+  if (q.length > 40) q.length = 40;
+}
+
 // Overlap test of every machine part against intact building pieces and fixed blockers (trucks, gas line)
 const _qp = new THREE.Vector3(), _qq = new THREE.Quaternion();
 function rigBlocked() {
@@ -1422,7 +1565,7 @@ function rigBlocked() {
         if (b) { found = b; return false; }
         if (part.tag === 'tool') return true;                    // the tool is meant to hit buildings
         const piece = pieceByCollider.get(c.handle);
-        if (!piece) return true;
+        if (!piece || piece.gen > 0) return true;                // loose chunks of rubble don't stop the boom
         if (part.tag === 'machine' && piece.moved) return true;  // the crawler may shove loose rubble
         found = 'building'; return false;
       });
@@ -1444,6 +1587,17 @@ function syncDynamicMeshes(force = false) {
       dirty.add(p.mesh);
     }
     for (const m of dirty) m.instanceMatrix.needsUpdate = true;
+  }
+  if (level.debrisMesh && level.debris.length) {
+    let dirty = force;
+    for (const p of level.debris) {
+      if (!force && p.body.isSleeping()) continue;
+      const t = p.body.translation(), r = p.body.rotation();
+      _p.set(t.x, t.y, t.z); _q.set(r.x, r.y, r.z, r.w); _sc.set(...p.size);
+      level.debrisMesh.setMatrixAt(p.idx, _m4.compose(_p, _q, _sc));
+      dirty = true;
+    }
+    if (dirty) level.debrisMesh.instanceMatrix.needsUpdate = true;
   }
   if (level.clodMesh) {
     let dirty = force;
@@ -1776,4 +1930,4 @@ setLatency(+ui.latency.value || 0);
 infoReady.finally(connectPadRelay);
 requestAnimationFrame(frame);
 window.__game = { game, level, get rig() { return rig; }, get M() { return M; }, MACHINES, pad, keys, ball, startGame, endGame, resetLevel, selectMachine,
-  setLatency, TEMPLATES, physicsStep, judge, syncDynamicMeshes };
+  setLatency, TEMPLATES, physicsStep, judge, syncDynamicMeshes, FRACTURE };
